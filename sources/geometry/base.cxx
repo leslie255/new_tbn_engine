@@ -1,4 +1,4 @@
-#include "geometry_base.hxx"
+#include "base.hxx"
 
 wgpu::VertexState GeometryBase::create_vertex_state(const wgpu::Device&) const {
     __builtin_trap();

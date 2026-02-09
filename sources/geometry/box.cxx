@@ -1,6 +1,8 @@
-#include "box_geometry.hxx"
+#include "box.hxx"
 
 #include <glm/ext/matrix_transform.hpp>
+
+using namespace std::literals;
 
 static std::string_view SHADER_CODE = R"(
 
@@ -10,12 +12,51 @@ static std::string_view SHADER_CODE = R"(
 @group(1) @binding(1) var<uniform> normal_transform: mat4x4<f32>;
 
 @vertex fn main(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
-    const pos = array(
-        vec2(0.0, 1.0),
-        vec2(-1.0, -1.0),
-        vec2(1.0, -1.0),
+    const positions = array(
+        // South
+        vec3<f32>(0., 0., 1.),
+        vec3<f32>(1., 0., 1.),
+        vec3<f32>(1., 1., 1.),
+        vec3<f32>(1., 1., 1.),
+        vec3<f32>(0., 1., 1.),
+        vec3<f32>(0., 0., 1.),
+        // North
+        vec3<f32>(0., 0., 0.),
+        vec3<f32>(0., 1., 0.),
+        vec3<f32>(1., 1., 0.),
+        vec3<f32>(1., 1., 0.),
+        vec3<f32>(1., 0., 0.),
+        vec3<f32>(0., 0., 0.),
+        // East
+        vec3<f32>(1., 0., 0.),
+        vec3<f32>(1., 1., 0.),
+        vec3<f32>(1., 1., 1.),
+        vec3<f32>(1., 1., 1.),
+        vec3<f32>(1., 0., 1.),
+        vec3<f32>(1., 0., 0.),
+        // West
+        vec3<f32>(0., 1., 0.),
+        vec3<f32>(0., 0., 0.),
+        vec3<f32>(0., 0., 1.),
+        vec3<f32>(0., 0., 1.),
+        vec3<f32>(0., 1., 1.),
+        vec3<f32>(0., 1., 0.),
+        // Up
+        vec3<f32>(1., 1., 0.),
+        vec3<f32>(0., 1., 0.),
+        vec3<f32>(0., 1., 1.),
+        vec3<f32>(0., 1., 1.),
+        vec3<f32>(1., 1., 1.),
+        vec3<f32>(1., 1., 0.),
+        // Down
+        vec3<f32>(0., 0., 0.),
+        vec3<f32>(1., 0., 0.),
+        vec3<f32>(1., 0., 1.),
+        vec3<f32>(1., 0., 1.),
+        vec3<f32>(0., 0., 1.),
+        vec3<f32>(0., 0., 0.),
     );
-    return projection * model_view * vec4(pos[i], 0.0, 1.0);
+    return projection * model_view * vec4(positions[i], 1.0);
 }
 
 )";
@@ -30,6 +71,7 @@ BoxGeometry::BoxGeometry(const wgpu::Device& device, const wgpu::Queue& queue) {
     this->model_view = device.CreateBuffer(&buffer_descriptor);
     this->normal_transform = device.CreateBuffer(&buffer_descriptor);
 
+    // Initialize with identity matrices for sanity sake.
     auto identity4x4 = glm::identity<glm::mat4x4>();
     queue.WriteBuffer(this->model_view, 0, &identity4x4, sizeof(identity4x4));
     queue.WriteBuffer(this->normal_transform, 0, &identity4x4, sizeof(identity4x4));
@@ -40,7 +82,10 @@ wgpu::VertexState BoxGeometry::create_vertex_state(const wgpu::Device& device) c
         .nextInChain = nullptr,
         .code = wgpu::StringView(SHADER_CODE),
     });
-    auto shader_module_descriptor = wgpu::ShaderModuleDescriptor {.nextInChain = &wgsl};
+    auto shader_module_descriptor = wgpu::ShaderModuleDescriptor {
+        .nextInChain = &wgsl,
+        .label = "Box"sv,
+    };
     auto shader_module = device.CreateShaderModule(&shader_module_descriptor);
     return wgpu::VertexState {
         .module = shader_module,
@@ -49,7 +94,7 @@ wgpu::VertexState BoxGeometry::create_vertex_state(const wgpu::Device& device) c
 }
 
 wgpu::BindGroupLayout BoxGeometry::create_bind_group_layout(const wgpu::Device& device) const {
-    auto layout_entries = std::array {
+    auto entries = std::array {
         wgpu::BindGroupLayoutEntry {
             .binding = 0,
             .visibility = wgpu::ShaderStage::Vertex,
@@ -71,17 +116,18 @@ wgpu::BindGroupLayout BoxGeometry::create_bind_group_layout(const wgpu::Device& 
                 },
         },
     };
-    auto bind_group_layout_descriptor = wgpu::BindGroupLayoutDescriptor {
-        .entryCount = layout_entries.size(),
-        .entries = layout_entries.data(),
+    auto descriptor = wgpu::BindGroupLayoutDescriptor {
+        .label = "Box"sv,
+        .entryCount = entries.size(),
+        .entries = entries.data(),
     };
-    return device.CreateBindGroupLayout(&bind_group_layout_descriptor);
+    return device.CreateBindGroupLayout(&descriptor);
 }
 
 wgpu::BindGroup BoxGeometry::create_bind_group(
     const wgpu::Device& device,
     wgpu::BindGroupLayout layout) const {
-    auto bind_group_0_entries = std::array {
+    auto entries = std::array {
         wgpu::BindGroupEntry {
             .binding = 0,
             .buffer = this->model_view,
@@ -95,12 +141,13 @@ wgpu::BindGroup BoxGeometry::create_bind_group(
             .size = sizeof(float[4][4]),
         },
     };
-    auto bind_group_0_descriptor = wgpu::BindGroupDescriptor {
+    auto descriptor = wgpu::BindGroupDescriptor {
+        .label = "Box"sv,
         .layout = layout,
-        .entryCount = bind_group_0_entries.size(),
-        .entries = bind_group_0_entries.data(),
+        .entryCount = entries.size(),
+        .entries = entries.data(),
     };
-    return device.CreateBindGroup(&bind_group_0_descriptor);
+    return device.CreateBindGroup(&descriptor);
 }
 
 void BoxGeometry::set_model_view(const wgpu::Queue& queue, glm::mat4x4 model, glm::mat4x4 view) {
@@ -114,6 +161,6 @@ void BoxGeometry::set_model_view(const wgpu::Queue& queue, glm::mat4x4 model, gl
 DrawParameters BoxGeometry::draw_parameters() const {
     return DrawParametersIndexless {
         .vertex_buffer = nullptr,
-        .vertex_count = 3,
+        .vertex_count = 36,
     };
 }

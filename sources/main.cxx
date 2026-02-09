@@ -7,7 +7,10 @@
 #include <webgpu/webgpu_cpp.h>
 #include <webgpu/webgpu_glfw.h>
 
-#include "box_geometry.hxx"
+#include "camera/perspective.hxx"
+#include "geometry/box.hxx"
+
+using namespace std::literals;
 
 #if defined(__EMSCRIPTEN__)
 #include <emscripten/emscripten.h>
@@ -18,29 +21,105 @@ constexpr uint32_t INIT_WINDOW_HEIGHT = 480;
 
 static std::string_view FRAGMENT_SHADER_CODE = R"(
 @fragment fn fs_main() -> @location(0) vec4<f32> {
-    return vec4(0.0, 1.0, 1.0, 1.0);
+    return vec4(0.0, 0.53, 0.75, 1.0);
 }
 )";
 
-static inline wgpu::BindGroupLayout create_camera_bind_group_layout(const wgpu::Device& device) {
-    auto layout_entries = std::array {
-        wgpu::BindGroupLayoutEntry {
-            .binding = 0,
-            .visibility = wgpu::ShaderStage::Vertex,
-            .buffer =
-                wgpu::BufferBindingLayout {
-                    .type = wgpu::BufferBindingType::Uniform,
-                    .hasDynamicOffset = false,
-                    .minBindingSize = sizeof(float[4][4]),
-                },
-        },
-    };
-    auto bind_group_layout_descriptor = wgpu::BindGroupLayoutDescriptor {
-        .entryCount = layout_entries.size(),
-        .entries = layout_entries.data(),
-    };
-    return device.CreateBindGroupLayout(&bind_group_layout_descriptor);
+static inline double unix_seconds() {
+    using namespace std::chrono;
+    return duration<double>(system_clock::now().time_since_epoch()).count();
 }
+
+/// Sets vertex and index buffer (if any), and encodes draw command based on the `draw_parameters`
+/// of a geometry.
+template <class Geometry>
+    requires is_geometry<Geometry>
+void draw_commands(wgpu::RenderPassEncoder& render_pass, const Geometry& geometry) {
+    auto draw_parameters = geometry.draw_parameters();
+    if (const auto* parameters = std::get_if<DrawParametersIndexless>(&draw_parameters)) {
+        if (parameters->vertex_buffer != nullptr) {
+            render_pass.SetVertexBuffer(0, parameters->vertex_buffer);
+        }
+        render_pass.Draw(
+            parameters->vertex_count,
+            parameters->instance_count,
+            parameters->first_vertex,
+            parameters->first_instance);
+    } else if (const auto* parameters = std::get_if<DrawParametersIndexed>(&draw_parameters)) {
+        assert(parameters->index_buffer != nullptr);
+        render_pass.SetIndexBuffer(parameters->index_buffer, parameters->index_format);
+        if (parameters->vertex_buffer != nullptr) {
+            render_pass.SetVertexBuffer(0, parameters->vertex_buffer);
+        }
+        render_pass.DrawIndexed(
+            parameters->index_count,
+            parameters->instance_count,
+            parameters->first_index,
+            parameters->base_vertex,
+            parameters->first_instance);
+    }
+}
+
+struct CameraBindGroup {
+    wgpu::BindGroup wgpu_bind_group;
+    wgpu::BindGroupLayout layout;
+    wgpu::Buffer projection;
+
+    CameraBindGroup() = default;
+
+    CameraBindGroup(const wgpu::Device& device, const wgpu::Queue& queue) {
+        // Projection uniform buffer.
+        auto buffer_descriptor = wgpu::BufferDescriptor {
+            .usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
+            .size = sizeof(float[4][4]),
+            .mappedAtCreation = false,
+        };
+        this->projection = device.CreateBuffer(&buffer_descriptor);
+
+        auto identity4x4 = glm::identity<glm::mat4x4>();
+        queue.WriteBuffer(this->projection, 0, &identity4x4, sizeof(identity4x4));
+
+        // Bind group layout.
+        auto layout_entries = std::array {
+            wgpu::BindGroupLayoutEntry {
+                .binding = 0,
+                .visibility = wgpu::ShaderStage::Vertex,
+                .buffer =
+                    wgpu::BufferBindingLayout {
+                        .type = wgpu::BufferBindingType::Uniform,
+                        .hasDynamicOffset = false,
+                        .minBindingSize = sizeof(float[4][4]),
+                    },
+            },
+        };
+        auto layout_descriptor = wgpu::BindGroupLayoutDescriptor {
+            .label = "Camera"sv,
+            .entryCount = layout_entries.size(),
+            .entries = layout_entries.data(),
+        };
+        this->layout = device.CreateBindGroupLayout(&layout_descriptor);
+
+        auto entries = std::array {
+            wgpu::BindGroupEntry {
+                .binding = 0,
+                .buffer = this->projection,
+                .offset = 0,
+                .size = sizeof(float[4][4]),
+            },
+        };
+        auto bind_group_descriptor = wgpu::BindGroupDescriptor {
+            .label = "Camera"sv,
+            .layout = layout,
+            .entryCount = entries.size(),
+            .entries = entries.data(),
+        };
+        this->wgpu_bind_group = device.CreateBindGroup(&bind_group_descriptor);
+    }
+
+    void set_projection(const wgpu::Queue& queue, glm::mat4x4 value) {
+        queue.WriteBuffer(this->projection, 0, &value, sizeof(value));
+    }
+};
 
 struct Application {
     wgpu::Instance instance;
@@ -51,8 +130,10 @@ struct Application {
     wgpu::Surface surface;
     wgpu::TextureFormat surface_format;
 
+    PerspectiveCamera camera;
+    CameraBindGroup camera_bind_group;
+
     wgpu::RenderPipeline pipeline;
-    wgpu::BindGroup camera_bind_group;
     wgpu::BindGroup geometry_bind_group;
     BoxGeometry geometry;
 
@@ -63,6 +144,9 @@ struct Application {
         this->initialize_window_and_surface();
         this->configure_surface();
         this->create_render_pipeline();
+
+        this->camera.position = glm::vec3(0, 0, 100);
+        this->camera.direction = glm::normalize(glm::vec3(0, 0., -1));
 
 #if defined(__EMSCRIPTEN__)
         emscripten_set_main_loop_arg(emscripten_main_loop, this, 0, true);
@@ -101,7 +185,7 @@ struct Application {
                 wgpu::StringView message) {
                 if (status != wgpu::RequestAdapterStatus::Success) {
                     fmt::println("[ERROR] error requesting adapter: {}", fmt::streamed(message));
-                    std::abort();
+                    abort();
                 }
                 this->adapter = std::move(adapter);
             });
@@ -183,18 +267,17 @@ struct Application {
             .height = height,
         };
         surface.Configure(&surface_configuration);
-        fmt::println("[VERBOSE] configured surface for size {}x{}", width, height);
     }
 
     void create_render_pipeline() {
         // Geometry.
         this->geometry = BoxGeometry(this->device, this->queue);
-        auto model = glm::identity<glm::mat4x4>();
-        model = glm::scale(model, glm::vec3(0.5, 0.5, 0.5));
-        this->geometry.set_model_view(this->queue, model, glm::identity<glm::mat4x4>());
 
-        // Bindgroup Layouts.
-        auto camera_bind_group_layout = create_camera_bind_group_layout(this->device);
+        // Camera bind group.
+        this->camera_bind_group = CameraBindGroup(this->device, this->queue);
+
+        // Bind group layouts.
+        auto camera_bind_group_layout = this->camera_bind_group.layout;
         auto geometry_bind_group_layout = this->geometry.create_bind_group_layout(this->device);
         auto bind_group_layouts = std::array {
             camera_bind_group_layout,
@@ -252,28 +335,12 @@ struct Application {
         auto uniform_buffer = this->device.CreateBuffer(&uniform_buffer_descriptor);
         auto identity4x4 = glm::identity<glm::mat4x4>();
         this->queue.WriteBuffer(uniform_buffer, 0, &identity4x4, sizeof(identity4x4));
-
-        // Camera Bind Group.
-        auto bind_group_0_entries = std::array {
-            wgpu::BindGroupEntry {
-                .binding = 0,
-                .buffer = uniform_buffer,
-                .offset = 0,
-                .size = sizeof(float[4][4]),
-            },
-        };
-        auto camera_bind_group_descriptor = wgpu::BindGroupDescriptor {
-            .layout = camera_bind_group_layout,
-            .entryCount = bind_group_0_entries.size(),
-            .entries = bind_group_0_entries.data(),
-        };
-        this->camera_bind_group = this->device.CreateBindGroup(&camera_bind_group_descriptor);
     }
 
     void initialize_window_and_surface() {
         if (!glfwInit()) {
             fmt::println("[ERROR] GLFW initialization error");
-            std::abort();
+            abort();
         }
 
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -294,6 +361,24 @@ struct Application {
         surface.GetCurrentTexture(&surface_texture);
         auto surface_texture_view = surface_texture.texture.CreateView();
 
+        int32_t width;
+        int32_t height;
+        glfwGetWindowSize(this->window, &width, &height);
+        auto projection = this->camera.projection_matrix((float)width, (float)height);
+        this->camera_bind_group.set_projection(this->queue, projection);
+
+        auto view = this->camera.view_matrix();
+
+        float period = 2;
+        auto rotation = (float)fmod(unix_seconds() / period, glm::two_pi<double>());
+        auto cube_size = glm::vec3(60, 60, 60);
+        auto model = glm::identity<glm::mat4x4>();
+        model = glm::rotate(model, rotation, glm::vec3(0, 1, 0)),
+        model = glm::rotate(model, rotation - glm::pi<float>(), glm::vec3(0, 0, 1)),
+        model = glm::translate(model, -0.5f * cube_size);
+        model = glm::scale(model, cube_size);
+        this->geometry.set_model_view(this->queue, model, view);
+
         auto encoder = this->device.CreateCommandEncoder();
         auto attachment = wgpu::RenderPassColorAttachment {
             .view = surface_texture_view,
@@ -308,31 +393,9 @@ struct Application {
         auto render_pass = encoder.BeginRenderPass(&render_pass_descriptor);
 
         render_pass.SetPipeline(this->pipeline);
-        render_pass.SetBindGroup(0, this->camera_bind_group);
+        render_pass.SetBindGroup(0, this->camera_bind_group.wgpu_bind_group);
         render_pass.SetBindGroup(1, this->geometry_bind_group);
-        auto draw_parameters = this->geometry.draw_parameters();
-        if (const auto* parameters = std::get_if<DrawParametersIndexless>(&draw_parameters)) {
-            if (parameters->vertex_buffer != nullptr) {
-                render_pass.SetVertexBuffer(0, parameters->vertex_buffer);
-            }
-            render_pass.Draw(
-                parameters->vertex_count,
-                parameters->instance_count,
-                parameters->first_vertex,
-                parameters->first_instance);
-        } else if (const auto* parameters = std::get_if<DrawParametersIndexed>(&draw_parameters)) {
-            assert(parameters->index_buffer != nullptr);
-            render_pass.SetIndexBuffer(parameters->index_buffer, parameters->index_format);
-            if (parameters->vertex_buffer != nullptr) {
-                render_pass.SetVertexBuffer(0, parameters->vertex_buffer);
-            }
-            render_pass.DrawIndexed(
-                parameters->index_count,
-                parameters->instance_count,
-                parameters->first_index,
-                parameters->base_vertex,
-                parameters->first_instance);
-        }
+        draw_commands(render_pass, this->geometry);
         render_pass.End();
 
         auto command_buffer = encoder.Finish();

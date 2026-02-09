@@ -26,8 +26,12 @@ set(CMAKE_CXX_FLAGS_DEBUG "-O0")
 
 add_executable(app
   "sources/main.cxx"
-  "sources/geometry_base.cxx"
-  "sources/box_geometry.cxx")
+  "sources/geometry/base.cxx"
+  "sources/geometry/box.cxx"
+  "sources/camera/base.cxx"
+  "sources/camera/perspective.cxx"
+  "sources/camera/orthographic.cxx"
+  )
 
 # === Project Compiler Flags === #
 

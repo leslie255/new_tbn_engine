@@ -1,6 +1,6 @@
 #pragma once
 
-#include "geometry_base.hxx"
+#include "base.hxx"
 
 #include <glm/common.hpp>
 #include <glm/matrix.hpp>
