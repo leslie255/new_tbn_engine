@@ -1,0 +1,9 @@
+[submodule "libraries/dawn"]
+	path = libraries/dawn
+	url = https://github.com/google/dawn.git
+[submodule "libraries/fmt"]
+	path = libraries/fmt
+	url = https://github.com/fmtlib/fmt.git
+[submodule "libraries/glm"]
+	path = libraries/glm
+	url = https://github.com/g-truc/glm.git

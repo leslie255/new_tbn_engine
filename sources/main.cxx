@@ -1,0 +1,351 @@
+#include <GLFW/glfw3.h>
+#include <dawn/webgpu_cpp_print.h>
+#include <fmt/format.h>
+#include <fmt/ostream.h>
+#include <glm/ext/matrix_transform.hpp>
+#include <span>
+#include <webgpu/webgpu_cpp.h>
+#include <webgpu/webgpu_glfw.h>
+
+#include "box_geometry.hxx"
+
+#if defined(__EMSCRIPTEN__)
+#include <emscripten/emscripten.h>
+#endif
+
+constexpr uint32_t INIT_WINDOW_WIDTH = 720;
+constexpr uint32_t INIT_WINDOW_HEIGHT = 480;
+
+static std::string_view FRAGMENT_SHADER_CODE = R"(
+@fragment fn fs_main() -> @location(0) vec4<f32> {
+    return vec4(0.0, 1.0, 1.0, 1.0);
+}
+)";
+
+static inline wgpu::BindGroupLayout create_camera_bind_group_layout(const wgpu::Device& device) {
+    auto layout_entries = std::array {
+        wgpu::BindGroupLayoutEntry {
+            .binding = 0,
+            .visibility = wgpu::ShaderStage::Vertex,
+            .buffer =
+                wgpu::BufferBindingLayout {
+                    .type = wgpu::BufferBindingType::Uniform,
+                    .hasDynamicOffset = false,
+                    .minBindingSize = sizeof(float[4][4]),
+                },
+        },
+    };
+    auto bind_group_layout_descriptor = wgpu::BindGroupLayoutDescriptor {
+        .entryCount = layout_entries.size(),
+        .entries = layout_entries.data(),
+    };
+    return device.CreateBindGroupLayout(&bind_group_layout_descriptor);
+}
+
+struct Application {
+    wgpu::Instance instance;
+    wgpu::Adapter adapter;
+    wgpu::Device device;
+    wgpu::Queue queue;
+
+    wgpu::Surface surface;
+    wgpu::TextureFormat surface_format;
+
+    wgpu::RenderPipeline pipeline;
+    wgpu::BindGroup camera_bind_group;
+    wgpu::BindGroup geometry_bind_group;
+    BoxGeometry geometry;
+
+    GLFWwindow* window;
+
+    void run() {
+        this->initialize_wgpu();
+        this->initialize_window_and_surface();
+        this->configure_surface();
+        this->create_render_pipeline();
+
+#if defined(__EMSCRIPTEN__)
+        emscripten_set_main_loop_arg(emscripten_main_loop, this, 0, true);
+#else
+        while (!glfwWindowShouldClose(this->window)) {
+            glfwPollEvents();
+            this->draw_frame();
+            this->surface.Present();
+            this->instance.ProcessEvents();
+        }
+#endif
+    }
+
+    static void emscripten_main_loop(void* arg) {
+        auto this_ = (Application*)arg;
+        this_->draw_frame();
+    }
+
+    void initialize_wgpu() {
+        // Instance.
+        auto required_features = std::array {
+            wgpu::InstanceFeatureName::TimedWaitAny,
+        };
+        auto instance_descriptor = wgpu::InstanceDescriptor {
+            .requiredFeatureCount = 1,
+            .requiredFeatures = required_features.data(),
+        };
+        this->instance = wgpu::CreateInstance(&instance_descriptor);
+
+        // Adapter.
+        auto adapter_future = instance.RequestAdapter(
+            nullptr,
+            wgpu::CallbackMode::WaitAnyOnly,
+            [&](wgpu::RequestAdapterStatus status,
+                wgpu::Adapter adapter,
+                wgpu::StringView message) {
+                if (status != wgpu::RequestAdapterStatus::Success) {
+                    fmt::println("[ERROR] error requesting adapter: {}", fmt::streamed(message));
+                    std::abort();
+                }
+                this->adapter = std::move(adapter);
+            });
+        this->instance.WaitAny(adapter_future, UINT64_MAX);
+
+        // Device.
+        wgpu::DeviceDescriptor device_descriptor {};
+        device_descriptor.SetUncapturedErrorCallback(
+            [](const wgpu::Device&, wgpu::ErrorType error_type, wgpu::StringView message) {
+                fmt::println(
+                    "[Error] webgpu (dawn) error type: {}, message: {}",
+                    fmt::streamed(error_type),
+                    fmt::streamed(message));
+                __builtin_trap();
+            });
+        device_descriptor.SetDeviceLostCallback(
+            wgpu::CallbackMode::AllowSpontaneous,
+            [](const wgpu::Device&, wgpu::DeviceLostReason reason, wgpu::StringView message) {
+                if (reason == wgpu::DeviceLostReason::Destroyed) {
+                    fmt::println("[VERBOSE] webgpu (dawn) device destroyed peacefully");
+                } else {
+                    fmt::println(
+                        "[WARN] webgpu (dawn) device lost, reason: {}, message: {}",
+                        fmt::streamed(reason),
+                        fmt::streamed(message));
+                }
+            });
+        auto device_future = adapter.RequestDevice(
+            &device_descriptor,
+            wgpu::CallbackMode::WaitAnyOnly,
+            [&](wgpu::RequestDeviceStatus status, wgpu::Device device, wgpu::StringView message) {
+                if (status != wgpu::RequestDeviceStatus::Success) {
+                    fmt::println(
+                        "[ERROR] webgpu (dawn) request device error: {}",
+                        fmt::streamed(message));
+                    __builtin_trap();
+                }
+                this->device = std::move(device);
+            });
+        instance.WaitAny(device_future, UINT64_MAX);
+
+        // Queue.
+        this->queue = this->device.GetQueue();
+    }
+
+    void configure_surface() {
+        wgpu::SurfaceCapabilities capabilities;
+        this->surface.GetCapabilities(this->adapter, &capabilities);
+        auto supported_formats = std::span(capabilities.formats, capabilities.formatCount);
+        for (wgpu::TextureFormat format :
+             std::span(capabilities.formats, capabilities.formatCount)) {
+            fmt::println("[VERBOSE] detected supported surface format: {}", fmt::streamed(format));
+            if (format == wgpu::TextureFormat::RGBA8UnormSrgb ||
+                format == wgpu::TextureFormat::BGRA8UnormSrgb) {
+                this->surface_format = format;
+            }
+        }
+        if (this->surface_format == wgpu::TextureFormat::Undefined) {
+            if (supported_formats.size() == 0) {
+                fmt::println(
+                    "[WARN] cannot find a any supported surface format, using RGBA8UnormSrgb");
+                this->surface_format = wgpu::TextureFormat::RGBA8UnormSrgb;
+            } else {
+                fmt::println(
+                    "[WARN] cannot find a any suitable surface format, using the first availible "
+                    "one instead");
+                this->surface_format = capabilities.formats[0];
+            }
+        }
+        fmt::println("[INFO] chosen surface format {}", fmt::streamed(this->surface_format));
+        this->reconfigure_surface_for_resize(INIT_WINDOW_WIDTH, INIT_WINDOW_HEIGHT);
+    }
+
+    void reconfigure_surface_for_resize(uint32_t width, uint32_t height) {
+        auto surface_configuration = wgpu::SurfaceConfiguration {
+            .device = this->device,
+            .format = this->surface_format,
+            .width = width,
+            .height = height,
+        };
+        surface.Configure(&surface_configuration);
+        fmt::println("[VERBOSE] configured surface for size {}x{}", width, height);
+    }
+
+    void create_render_pipeline() {
+        // Geometry.
+        this->geometry = BoxGeometry(this->device, this->queue);
+        auto model = glm::identity<glm::mat4x4>();
+        model = glm::scale(model, glm::vec3(0.5, 0.5, 0.5));
+        this->geometry.set_model_view(this->queue, model, glm::identity<glm::mat4x4>());
+
+        // Bindgroup Layouts.
+        auto camera_bind_group_layout = create_camera_bind_group_layout(this->device);
+        auto geometry_bind_group_layout = this->geometry.create_bind_group_layout(this->device);
+        auto bind_group_layouts = std::array {
+            camera_bind_group_layout,
+            geometry_bind_group_layout,
+        };
+
+        // Pipeline Layout.
+        auto pipeline_layout_descriptor = wgpu::PipelineLayoutDescriptor {
+            .bindGroupLayoutCount = bind_group_layouts.size(),
+            .bindGroupLayouts = bind_group_layouts.data(),
+        };
+        auto pipeline_layout = this->device.CreatePipelineLayout(&pipeline_layout_descriptor);
+
+        // Fragment Shader module.
+        auto fragment_shader_code = wgpu::ShaderSourceWGSL({
+            .nextInChain = nullptr,
+            .code = wgpu::StringView(FRAGMENT_SHADER_CODE),
+        });
+        auto fragment_shader_module_descriptor = wgpu::ShaderModuleDescriptor {
+            .nextInChain = &fragment_shader_code,
+        };
+        auto fragment_shader_module =
+            this->device.CreateShaderModule(&fragment_shader_module_descriptor);
+
+        // Pipeline.
+        auto color_target_state = wgpu::ColorTargetState {
+            .format = surface_format,
+            .blend = nullptr,
+            .writeMask = wgpu::ColorWriteMask::All,
+        };
+        auto fragment_state = wgpu::FragmentState {
+            .module = fragment_shader_module,
+            .constantCount = 0,
+            .constants = nullptr,
+            .targetCount = 1,
+            .targets = &color_target_state,
+        };
+        auto vertex_state = this->geometry.create_vertex_state(this->device);
+        auto pipeline_descriptor = wgpu::RenderPipelineDescriptor {
+            .layout = pipeline_layout,
+            .vertex = vertex_state,
+            .fragment = &fragment_state,
+        };
+        this->pipeline = this->device.CreateRenderPipeline(&pipeline_descriptor);
+
+        this->geometry_bind_group =
+            this->geometry.create_bind_group(this->device, geometry_bind_group_layout);
+
+        // Projection Uniform.
+        auto uniform_buffer_descriptor = wgpu::BufferDescriptor {
+            .usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
+            .size = sizeof(float[4][4]),
+            .mappedAtCreation = false,
+        };
+        auto uniform_buffer = this->device.CreateBuffer(&uniform_buffer_descriptor);
+        auto identity4x4 = glm::identity<glm::mat4x4>();
+        this->queue.WriteBuffer(uniform_buffer, 0, &identity4x4, sizeof(identity4x4));
+
+        // Camera Bind Group.
+        auto bind_group_0_entries = std::array {
+            wgpu::BindGroupEntry {
+                .binding = 0,
+                .buffer = uniform_buffer,
+                .offset = 0,
+                .size = sizeof(float[4][4]),
+            },
+        };
+        auto camera_bind_group_descriptor = wgpu::BindGroupDescriptor {
+            .layout = camera_bind_group_layout,
+            .entryCount = bind_group_0_entries.size(),
+            .entries = bind_group_0_entries.data(),
+        };
+        this->camera_bind_group = this->device.CreateBindGroup(&camera_bind_group_descriptor);
+    }
+
+    void initialize_window_and_surface() {
+        if (!glfwInit()) {
+            fmt::println("[ERROR] GLFW initialization error");
+            std::abort();
+        }
+
+        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+        this->window = glfwCreateWindow(
+            INIT_WINDOW_WIDTH,
+            INIT_WINDOW_HEIGHT,
+            "WebGPU Test",
+            nullptr,
+            nullptr);
+        this->surface = wgpu::glfw::CreateSurfaceForWindow(instance, window);
+        glfwSetWindowSizeCallback(this->window, Application::window_resize_callback);
+
+        glfwSetWindowUserPointer(this->window, this);
+    }
+
+    void draw_frame() {
+        wgpu::SurfaceTexture surface_texture;
+        surface.GetCurrentTexture(&surface_texture);
+        auto surface_texture_view = surface_texture.texture.CreateView();
+
+        auto encoder = this->device.CreateCommandEncoder();
+        auto attachment = wgpu::RenderPassColorAttachment {
+            .view = surface_texture_view,
+            .loadOp = wgpu::LoadOp::Clear,
+            .storeOp = wgpu::StoreOp::Store,
+            .clearValue = wgpu::Color {0.0, 0.0, 0.0, 0.0},
+        };
+        auto render_pass_descriptor = wgpu::RenderPassDescriptor {
+            .colorAttachmentCount = 1,
+            .colorAttachments = &attachment,
+        };
+        auto render_pass = encoder.BeginRenderPass(&render_pass_descriptor);
+
+        render_pass.SetPipeline(this->pipeline);
+        render_pass.SetBindGroup(0, this->camera_bind_group);
+        render_pass.SetBindGroup(1, this->geometry_bind_group);
+        auto draw_parameters = this->geometry.draw_parameters();
+        if (const auto* parameters = std::get_if<DrawParametersIndexless>(&draw_parameters)) {
+            if (parameters->vertex_buffer != nullptr) {
+                render_pass.SetVertexBuffer(0, parameters->vertex_buffer);
+            }
+            render_pass.Draw(
+                parameters->vertex_count,
+                parameters->instance_count,
+                parameters->first_vertex,
+                parameters->first_instance);
+        } else if (const auto* parameters = std::get_if<DrawParametersIndexed>(&draw_parameters)) {
+            assert(parameters->index_buffer != nullptr);
+            render_pass.SetIndexBuffer(parameters->index_buffer, parameters->index_format);
+            if (parameters->vertex_buffer != nullptr) {
+                render_pass.SetVertexBuffer(0, parameters->vertex_buffer);
+            }
+            render_pass.DrawIndexed(
+                parameters->index_count,
+                parameters->instance_count,
+                parameters->first_index,
+                parameters->base_vertex,
+                parameters->first_instance);
+        }
+        render_pass.End();
+
+        auto command_buffer = encoder.Finish();
+        this->device.GetQueue().Submit(1, &command_buffer);
+    }
+
+    static void window_resize_callback(GLFWwindow* window, int32_t width, int32_t height) {
+        auto this_ = (Application*)glfwGetWindowUserPointer(window);
+        this_->reconfigure_surface_for_resize((uint32_t)width, (uint32_t)height);
+    }
+};
+
+int main() {
+    auto application = Application {};
+    application.run();
+}
