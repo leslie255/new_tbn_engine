@@ -9,6 +9,7 @@
 
 #include "camera/perspective.hxx"
 #include "geometry/box.hxx"
+#include "material/uv_debug.hxx"
 
 using namespace std::literals;
 
@@ -18,21 +19,6 @@ using namespace std::literals;
 
 constexpr uint32_t INIT_WINDOW_WIDTH = 720;
 constexpr uint32_t INIT_WINDOW_HEIGHT = 480;
-
-static std::string_view FRAGMENT_SHADER_CODE = R"(
-
-struct VertexOut {
-    @builtin(position) builtin_position: vec4<f32>,
-    @location(0) position: vec3<f32>,
-    @location(1) uv: vec2<f32>,
-    @location(2) normal: vec3<f32>,
-};
-
-@fragment fn fs_main(vertex: VertexOut) -> @location(0) vec4<f32> {
-    return vec4(vertex.uv.x, vertex.uv.y, 0.28, 1.0);
-}
-
-)";
 
 static inline double unix_seconds() {
     using namespace std::chrono;
@@ -145,8 +131,10 @@ struct Application {
     CameraBindGroup camera_bind_group;
 
     wgpu::RenderPipeline pipeline;
-    wgpu::BindGroup geometry_bind_group;
     BoxGeometry geometry;
+    wgpu::BindGroup geometry_bind_group;
+    UvDebugMaterial material;
+    wgpu::BindGroup material_bind_group;
 
     GLFWwindow* window;
 
@@ -303,11 +291,12 @@ struct Application {
             .label = "Depth Texture"sv,
             .usage = wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::TextureBinding,
             .dimension = wgpu::TextureDimension::e2D,
-            .size = wgpu::Extent3D {
-                .width = width,
-                .height = height,
-                .depthOrArrayLayers = 1,
-            },
+            .size =
+                wgpu::Extent3D {
+                    .width = width,
+                    .height = height,
+                    .depthOrArrayLayers = 1,
+                },
             .format = wgpu::TextureFormat::Depth16Unorm,
         };
         this->depth_texture = this->device.CreateTexture(&depth_texture_descriptor);
@@ -324,9 +313,11 @@ struct Application {
         // Bind group layouts.
         auto camera_bind_group_layout = this->camera_bind_group.layout;
         auto geometry_bind_group_layout = this->geometry.create_bind_group_layout(this->device);
+        auto material_bind_group_layout = this->material.create_bind_group_layout(this->device);
         auto bind_group_layouts = std::array {
             camera_bind_group_layout,
             geometry_bind_group_layout,
+            material_bind_group_layout,
         };
 
         // Pipeline Layout.
@@ -335,17 +326,6 @@ struct Application {
             .bindGroupLayouts = bind_group_layouts.data(),
         };
         auto pipeline_layout = this->device.CreatePipelineLayout(&pipeline_layout_descriptor);
-
-        // Fragment Shader module.
-        auto fragment_shader_code = wgpu::ShaderSourceWGSL({
-            .nextInChain = nullptr,
-            .code = wgpu::StringView(FRAGMENT_SHADER_CODE),
-        });
-        auto fragment_shader_module_descriptor = wgpu::ShaderModuleDescriptor {
-            .nextInChain = &fragment_shader_code,
-        };
-        auto fragment_shader_module =
-            this->device.CreateShaderModule(&fragment_shader_module_descriptor);
 
         // Pipeline.
         auto vertex_state = this->geometry.create_vertex_state(this->device);
@@ -359,10 +339,11 @@ struct Application {
             .depthWriteEnabled = true,
             .depthCompare = wgpu::CompareFunction::Less,
         };
+        auto fragment_shader = this->material.create_fragment_shader(this->device);
         auto fragment_state = wgpu::FragmentState {
-            .module = fragment_shader_module,
-            .constantCount = 0,
-            .constants = nullptr,
+            .module = fragment_shader.shader_module,
+            .constantCount = fragment_shader.constants.size(),
+            .constants = fragment_shader.constants.data(),
             .targetCount = 1,
             .targets = &color_target_state,
         };
@@ -376,16 +357,8 @@ struct Application {
 
         this->geometry_bind_group =
             this->geometry.create_bind_group(this->device, geometry_bind_group_layout);
-
-        // Projection Uniform.
-        auto uniform_buffer_descriptor = wgpu::BufferDescriptor {
-            .usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
-            .size = sizeof(float[4][4]),
-            .mappedAtCreation = false,
-        };
-        auto uniform_buffer = this->device.CreateBuffer(&uniform_buffer_descriptor);
-        auto identity4x4 = glm::identity<glm::mat4x4>();
-        this->queue.WriteBuffer(uniform_buffer, 0, &identity4x4, sizeof(identity4x4));
+        this->material_bind_group =
+            this->material.create_bind_group(this->device, material_bind_group_layout);
     }
 
     void draw_frame() {
@@ -435,6 +408,7 @@ struct Application {
         render_pass.SetPipeline(this->pipeline);
         render_pass.SetBindGroup(0, this->camera_bind_group.wgpu_bind_group);
         render_pass.SetBindGroup(1, this->geometry_bind_group);
+        render_pass.SetBindGroup(2, this->material_bind_group);
         draw_commands(render_pass, this->geometry);
         render_pass.End();
 

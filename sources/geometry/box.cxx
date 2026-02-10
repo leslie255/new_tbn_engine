@@ -8,12 +8,13 @@ static std::string_view SHADER_CODE = R"(
 
 @group(0) @binding(0) var<uniform> projection: mat4x4<f32>;
 
-@group(1) @binding(0) var<uniform> model_view: mat4x4<f32>;
-@group(1) @binding(1) var<uniform> normal_transform: mat4x4<f32>;
+@group(1) @binding(0) var<uniform> model: mat4x4<f32>;
+@group(1) @binding(1) var<uniform> model_view: mat4x4<f32>;
+@group(1) @binding(2) var<uniform> normal_transform: mat4x4<f32>;
 
 struct VertexOut {
-    @builtin(position) builtin_position: vec4<f32>,
-    @location(0) position: vec3<f32>,
+    @builtin(position) position_clip: vec4<f32>,
+    @location(0) position_world: vec3<f32>,
     @location(1) uv: vec2<f32>,
     @location(2) normal: vec3<f32>,
 };
@@ -152,15 +153,11 @@ struct VertexOut {
         vec3<f32>(0., -1., 0.),
     );
 
-    let position = projection * model_view * vec4(positions[i], 1.0);
-    let uv = uvs[i];
-    let normal = (normal_transform * vec4(normals[i], 1.0)).xyz;
-
     var output: VertexOut;
-    output.builtin_position = position;
-    output.position = position.xyz;
-    output.uv = uv;
-    output.normal = normal;
+    output.position_clip = projection * model_view * vec4(positions[i], 1.0);
+    output.position_world = positions[i].xyz;
+    output.uv = uvs[i];
+    output.normal = (normal_transform * vec4(normals[i], 1.0)).xyz;
 
     return output;
 }
@@ -173,12 +170,14 @@ BoxGeometry::BoxGeometry(const wgpu::Device& device, const wgpu::Queue& queue) {
         .size = sizeof(float[4][4]),
         .mappedAtCreation = false,
     };
-    // They're both 4x4 matrices so can share the same descriptor.
+    // They're all 4x4 matrices so can share the same descriptor.
+    this->model = device.CreateBuffer(&buffer_descriptor);
     this->model_view = device.CreateBuffer(&buffer_descriptor);
     this->normal_transform = device.CreateBuffer(&buffer_descriptor);
 
     // Initialize with identity matrices for sanity sake.
     auto identity4x4 = glm::identity<glm::mat4x4>();
+    queue.WriteBuffer(this->model, 0, &identity4x4, sizeof(identity4x4));
     queue.WriteBuffer(this->model_view, 0, &identity4x4, sizeof(identity4x4));
     queue.WriteBuffer(this->normal_transform, 0, &identity4x4, sizeof(identity4x4));
 }
@@ -221,6 +220,16 @@ wgpu::BindGroupLayout BoxGeometry::create_bind_group_layout(const wgpu::Device& 
                     .minBindingSize = sizeof(float[4][4]),
                 },
         },
+        wgpu::BindGroupLayoutEntry {
+            .binding = 2,
+            .visibility = wgpu::ShaderStage::Vertex,
+            .buffer =
+                wgpu::BufferBindingLayout {
+                    .type = wgpu::BufferBindingType::Uniform,
+                    .hasDynamicOffset = false,
+                    .minBindingSize = sizeof(float[4][4]),
+                },
+        },
     };
     auto descriptor = wgpu::BindGroupLayoutDescriptor {
         .label = "Box"sv,
@@ -236,12 +245,18 @@ wgpu::BindGroup BoxGeometry::create_bind_group(
     auto entries = std::array {
         wgpu::BindGroupEntry {
             .binding = 0,
-            .buffer = this->model_view,
+            .buffer = this->model,
             .offset = 0,
             .size = sizeof(float[4][4]),
         },
         wgpu::BindGroupEntry {
             .binding = 1,
+            .buffer = this->model_view,
+            .offset = 0,
+            .size = sizeof(float[4][4]),
+        },
+        wgpu::BindGroupEntry {
+            .binding = 2,
             .buffer = this->normal_transform,
             .offset = 0,
             .size = sizeof(float[4][4]),
@@ -257,6 +272,8 @@ wgpu::BindGroup BoxGeometry::create_bind_group(
 }
 
 void BoxGeometry::set_model_view(const wgpu::Queue& queue, glm::mat4x4 model, glm::mat4x4 view) {
+    queue.WriteBuffer(this->model, 0, &model, sizeof(model));
+
     auto model_view = view * model;
     queue.WriteBuffer(this->model_view, 0, &model_view, sizeof(model_view));
 

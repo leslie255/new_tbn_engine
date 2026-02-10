@@ -6,6 +6,7 @@
 #include <glm/matrix.hpp>
 
 class BoxGeometry : public GeometryBase {
+    wgpu::Buffer model;
     wgpu::Buffer model_view;
     wgpu::Buffer normal_transform;
 

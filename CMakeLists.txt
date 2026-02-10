@@ -28,6 +28,8 @@ add_executable(app
   "sources/main.cxx"
   "sources/geometry/base.cxx"
   "sources/geometry/box.cxx"
+  "sources/material/base.cxx"
+  "sources/material/uv_debug.cxx"
   "sources/camera/base.cxx"
   "sources/camera/perspective.cxx"
   "sources/camera/orthographic.cxx"
