@@ -3,13 +3,14 @@
 #include <fmt/format.h>
 #include <fmt/ostream.h>
 #include <glm/ext/matrix_transform.hpp>
+#include <glm/gtc/color_space.hpp>
 #include <span>
 #include <webgpu/webgpu_cpp.h>
 #include <webgpu/webgpu_glfw.h>
 
 #include "camera/perspective.hxx"
 #include "geometry/box.hxx"
-#include "material/uv_debug.hxx"
+#include "material/color.hxx"
 
 using namespace std::literals;
 
@@ -23,36 +24,6 @@ constexpr uint32_t INIT_WINDOW_HEIGHT = 480;
 static inline double unix_seconds() {
     using namespace std::chrono;
     return duration<double>(system_clock::now().time_since_epoch()).count();
-}
-
-/// Sets vertex and index buffer (if any), and encodes draw command based on the `draw_parameters`
-/// of a geometry.
-template <class Geometry>
-    requires is_geometry<Geometry>
-void draw_commands(wgpu::RenderPassEncoder& render_pass, const Geometry& geometry) {
-    auto draw_parameters = geometry.draw_parameters();
-    if (const auto* parameters = std::get_if<DrawParametersIndexless>(&draw_parameters)) {
-        if (parameters->vertex_buffer != nullptr) {
-            render_pass.SetVertexBuffer(0, parameters->vertex_buffer);
-        }
-        render_pass.Draw(
-            parameters->vertex_count,
-            parameters->instance_count,
-            parameters->first_vertex,
-            parameters->first_instance);
-    } else if (const auto* parameters = std::get_if<DrawParametersIndexed>(&draw_parameters)) {
-        assert(parameters->index_buffer != nullptr);
-        render_pass.SetIndexBuffer(parameters->index_buffer, parameters->index_format);
-        if (parameters->vertex_buffer != nullptr) {
-            render_pass.SetVertexBuffer(0, parameters->vertex_buffer);
-        }
-        render_pass.DrawIndexed(
-            parameters->index_count,
-            parameters->instance_count,
-            parameters->first_index,
-            parameters->base_vertex,
-            parameters->first_instance);
-    }
 }
 
 struct CameraBindGroup {
@@ -116,6 +87,102 @@ struct CameraBindGroup {
     }
 };
 
+struct ObjectPipeline {
+    wgpu::RenderPipeline wgpu_pipeline;
+    wgpu::BindGroup geometry_bind_group;
+    wgpu::BindGroup material_bind_group;
+
+    ObjectPipeline() = default;
+
+    template <class Geometry, class Material>
+        requires is_geometry<Geometry> && is_material<Material>
+    ObjectPipeline(
+        const wgpu::Device& device,
+        wgpu::TextureFormat surface_format,
+        const CameraBindGroup& camera_bind_group,
+        const Geometry& geometry,
+        const Material& material) {
+        // Bind group layouts.
+        auto camera_bind_group_layout = camera_bind_group.layout;
+        auto geometry_bind_group_layout = geometry.create_bind_group_layout(device);
+        auto material_bind_group_layout = material.create_bind_group_layout(device);
+        auto bind_group_layouts = std::array {
+            camera_bind_group_layout,
+            geometry_bind_group_layout,
+            material_bind_group_layout,
+        };
+
+        // Pipeline Layout.
+        auto pipeline_layout_descriptor = wgpu::PipelineLayoutDescriptor {
+            .bindGroupLayoutCount = bind_group_layouts.size(),
+            .bindGroupLayouts = bind_group_layouts.data(),
+        };
+        auto pipeline_layout = device.CreatePipelineLayout(&pipeline_layout_descriptor);
+
+        // Pipeline.
+        auto vertex_state = geometry.create_vertex_state(device);
+        auto color_target_state = wgpu::ColorTargetState {
+            .format = surface_format,
+            .blend = nullptr,
+            .writeMask = wgpu::ColorWriteMask::All,
+        };
+        auto depth_stencil_state = wgpu::DepthStencilState {
+            .format = wgpu::TextureFormat::Depth16Unorm,
+            .depthWriteEnabled = true,
+            .depthCompare = wgpu::CompareFunction::Less,
+        };
+        auto fragment_shader = material.create_fragment_shader(device);
+        auto fragment_state = wgpu::FragmentState {
+            .module = fragment_shader.shader_module,
+            .constantCount = fragment_shader.constants.size(),
+            .constants = fragment_shader.constants.data(),
+            .targetCount = 1,
+            .targets = &color_target_state,
+        };
+        auto pipeline_descriptor = wgpu::RenderPipelineDescriptor {
+            .layout = pipeline_layout,
+            .vertex = vertex_state,
+            .depthStencil = &depth_stencil_state,
+            .fragment = &fragment_state,
+        };
+
+        this->wgpu_pipeline = device.CreateRenderPipeline(&pipeline_descriptor);
+        this->geometry_bind_group = geometry.create_bind_group(device, geometry_bind_group_layout);
+        this->material_bind_group = material.create_bind_group(device, material_bind_group_layout);
+    }
+
+    template <class Geometry>
+        requires is_geometry<Geometry>
+    void draw_commands(wgpu::RenderPassEncoder& render_pass, const Geometry& geometry) {
+        render_pass.SetPipeline(this->wgpu_pipeline);
+        render_pass.SetBindGroup(1, this->geometry_bind_group);
+        render_pass.SetBindGroup(2, this->material_bind_group);
+        auto draw_parameters = geometry.draw_parameters();
+        if (const auto* parameters = std::get_if<DrawParametersIndexless>(&draw_parameters)) {
+            if (parameters->vertex_buffer != nullptr) {
+                render_pass.SetVertexBuffer(0, parameters->vertex_buffer);
+            }
+            render_pass.Draw(
+                parameters->vertex_count,
+                parameters->instance_count,
+                parameters->first_vertex,
+                parameters->first_instance);
+        } else if (const auto* parameters = std::get_if<DrawParametersIndexed>(&draw_parameters)) {
+            assert(parameters->index_buffer != nullptr);
+            render_pass.SetIndexBuffer(parameters->index_buffer, parameters->index_format);
+            if (parameters->vertex_buffer != nullptr) {
+                render_pass.SetVertexBuffer(0, parameters->vertex_buffer);
+            }
+            render_pass.DrawIndexed(
+                parameters->index_count,
+                parameters->instance_count,
+                parameters->first_index,
+                parameters->base_vertex,
+                parameters->first_instance);
+        }
+    }
+};
+
 struct Application {
     wgpu::Instance instance;
     wgpu::Adapter adapter;
@@ -130,11 +197,9 @@ struct Application {
     PerspectiveCamera camera;
     CameraBindGroup camera_bind_group;
 
-    wgpu::RenderPipeline pipeline;
     BoxGeometry geometry;
-    wgpu::BindGroup geometry_bind_group;
-    UvDebugMaterial material;
-    wgpu::BindGroup material_bind_group;
+    ColorMaterial material;
+    ObjectPipeline pipeline;
 
     GLFWwindow* window;
 
@@ -304,61 +369,25 @@ struct Application {
     }
 
     void create_render_pipeline() {
-        // Geometry.
-        this->geometry = BoxGeometry(this->device, this->queue);
-
         // Camera bind group.
         this->camera_bind_group = CameraBindGroup(this->device, this->queue);
 
-        // Bind group layouts.
-        auto camera_bind_group_layout = this->camera_bind_group.layout;
-        auto geometry_bind_group_layout = this->geometry.create_bind_group_layout(this->device);
-        auto material_bind_group_layout = this->material.create_bind_group_layout(this->device);
-        auto bind_group_layouts = std::array {
-            camera_bind_group_layout,
-            geometry_bind_group_layout,
-            material_bind_group_layout,
-        };
+        // Geometry.
+        this->geometry = BoxGeometry(this->device, this->queue);
 
-        // Pipeline Layout.
-        auto pipeline_layout_descriptor = wgpu::PipelineLayoutDescriptor {
-            .bindGroupLayoutCount = bind_group_layouts.size(),
-            .bindGroupLayouts = bind_group_layouts.data(),
-        };
-        auto pipeline_layout = this->device.CreatePipelineLayout(&pipeline_layout_descriptor);
+        // Material.
+        this->material = ColorMaterial(
+            this->device,
+            this->queue,
+            glm::convertSRGBToLinear(glm::vec3(0, 0.5, 0.5)));
+        this->material.set_light_position(this->queue, glm::vec3(400, 400, -400));
 
-        // Pipeline.
-        auto vertex_state = this->geometry.create_vertex_state(this->device);
-        auto color_target_state = wgpu::ColorTargetState {
-            .format = surface_format,
-            .blend = nullptr,
-            .writeMask = wgpu::ColorWriteMask::All,
-        };
-        auto depth_stencil_state = wgpu::DepthStencilState {
-            .format = wgpu::TextureFormat::Depth16Unorm,
-            .depthWriteEnabled = true,
-            .depthCompare = wgpu::CompareFunction::Less,
-        };
-        auto fragment_shader = this->material.create_fragment_shader(this->device);
-        auto fragment_state = wgpu::FragmentState {
-            .module = fragment_shader.shader_module,
-            .constantCount = fragment_shader.constants.size(),
-            .constants = fragment_shader.constants.data(),
-            .targetCount = 1,
-            .targets = &color_target_state,
-        };
-        auto pipeline_descriptor = wgpu::RenderPipelineDescriptor {
-            .layout = pipeline_layout,
-            .vertex = vertex_state,
-            .depthStencil = &depth_stencil_state,
-            .fragment = &fragment_state,
-        };
-        this->pipeline = this->device.CreateRenderPipeline(&pipeline_descriptor);
-
-        this->geometry_bind_group =
-            this->geometry.create_bind_group(this->device, geometry_bind_group_layout);
-        this->material_bind_group =
-            this->material.create_bind_group(this->device, material_bind_group_layout);
+        this->pipeline = ObjectPipeline(
+            this->device,
+            this->surface_format,
+            this->camera_bind_group,
+            this->geometry,
+            this->material);
     }
 
     void draw_frame() {
@@ -373,6 +402,8 @@ struct Application {
         this->camera_bind_group.set_projection(this->queue, projection);
 
         auto view = this->camera.view_matrix();
+
+        this->material.set_view_position(this->queue, this->camera.position);
 
         auto period = 2.0;
         auto rotation = (float)fmod(unix_seconds() / period, glm::two_pi<double>());
@@ -405,11 +436,8 @@ struct Application {
         };
         auto render_pass = encoder.BeginRenderPass(&render_pass_descriptor);
 
-        render_pass.SetPipeline(this->pipeline);
         render_pass.SetBindGroup(0, this->camera_bind_group.wgpu_bind_group);
-        render_pass.SetBindGroup(1, this->geometry_bind_group);
-        render_pass.SetBindGroup(2, this->material_bind_group);
-        draw_commands(render_pass, this->geometry);
+        this->pipeline.draw_commands(render_pass, this->geometry);
         render_pass.End();
 
         auto command_buffer = encoder.Finish();

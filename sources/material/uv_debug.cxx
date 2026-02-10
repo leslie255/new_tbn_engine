@@ -43,17 +43,18 @@ ShaderInfo UvDebugMaterial::create_fragment_shader(const wgpu::Device& device) c
 
 wgpu::BindGroupLayout UvDebugMaterial::create_bind_group_layout(const wgpu::Device& device) const {
     auto descriptor = wgpu::BindGroupLayoutDescriptor {
-        .label = "Box"sv,
+        .label = "UV Debug Material"sv,
         .entryCount = 0,
         .entries = nullptr,
     };
     return device.CreateBindGroupLayout(&descriptor);
 }
 
-wgpu::BindGroup UvDebugMaterial::create_bind_group(const wgpu::Device& device, wgpu::BindGroupLayout layout)
-    const {
+wgpu::BindGroup UvDebugMaterial::create_bind_group(
+    const wgpu::Device& device,
+    wgpu::BindGroupLayout layout) const {
     auto descriptor = wgpu::BindGroupDescriptor {
-        .label = "Box"sv,
+        .label = "UV Debug Material"sv,
         .layout = layout,
         .entryCount = 0,
         .entries = nullptr,

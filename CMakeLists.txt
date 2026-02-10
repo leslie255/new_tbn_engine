@@ -30,6 +30,7 @@ add_executable(app
   "sources/geometry/box.cxx"
   "sources/material/base.cxx"
   "sources/material/uv_debug.cxx"
+  "sources/material/color.cxx"
   "sources/camera/base.cxx"
   "sources/camera/perspective.cxx"
   "sources/camera/orthographic.cxx"
@@ -67,7 +68,7 @@ target_link_libraries(app PRIVATE fmt glm)
 if(EMSCRIPTEN)
     set_target_properties(app PROPERTIES SUFFIX ".html")
     target_link_libraries(app PRIVATE emdawnwebgpu_cpp webgpu_glfw)
-    target_link_options(app PRIVATE "-sASYNCIFY=1" "-sUSE_GLFW=3" "-sEXIT_RUNTIME=0")
+    target_link_options(app PRIVATE "-sASYNCIFY=1" "-sUSE_GLFW=3" "-sEXIT_RUNTIME=0" "-sASSERTIONS")
 else()
     target_link_libraries(app PRIVATE webgpu_dawn webgpu_glfw glfw)
 endif()
