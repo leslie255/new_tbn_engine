@@ -11,7 +11,14 @@ static std::string_view SHADER_CODE = R"(
 @group(1) @binding(0) var<uniform> model_view: mat4x4<f32>;
 @group(1) @binding(1) var<uniform> normal_transform: mat4x4<f32>;
 
-@vertex fn main(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
+struct VertexOut {
+    @builtin(position) builtin_position: vec4<f32>,
+    @location(0) position: vec3<f32>,
+    @location(1) uv: vec2<f32>,
+    @location(2) normal: vec3<f32>,
+};
+
+@vertex fn main(@builtin(vertex_index) i: u32) -> VertexOut {
     const positions = array(
         // South
         vec3<f32>(0., 0., 1.),
@@ -56,7 +63,106 @@ static std::string_view SHADER_CODE = R"(
         vec3<f32>(0., 0., 1.),
         vec3<f32>(0., 0., 0.),
     );
-    return projection * model_view * vec4(positions[i], 1.0);
+    const uvs = array(
+        // South
+        vec2<f32>(0, 1.),
+        vec2<f32>(1, 1.),
+        vec2<f32>(1, 0.),
+        vec2<f32>(1, 0.),
+        vec2<f32>(0, 0.),
+        vec2<f32>(0, 1.),
+        // North
+        vec2<f32>(1, 1.),
+        vec2<f32>(1, 0.),
+        vec2<f32>(0, 0.),
+        vec2<f32>(0, 0.),
+        vec2<f32>(0, 1.),
+        vec2<f32>(1, 1.),
+        // East
+        vec2<f32>(1, 1.),
+        vec2<f32>(1, 0.),
+        vec2<f32>(0, 0.),
+        vec2<f32>(0, 0.),
+        vec2<f32>(0, 1.),
+        vec2<f32>(1, 1.),
+        // West
+        vec2<f32>(0, 0.),
+        vec2<f32>(0, 1.),
+        vec2<f32>(1, 1.),
+        vec2<f32>(1, 1.),
+        vec2<f32>(1, 0.),
+        vec2<f32>(0, 0.),
+        // Up
+        vec2<f32>(0, 1.),
+        vec2<f32>(1, 1.),
+        vec2<f32>(1, 0.),
+        vec2<f32>(1, 0.),
+        vec2<f32>(0, 0.),
+        vec2<f32>(0, 1.),
+        // Down
+        vec2<f32>(0, 1.),
+        vec2<f32>(1, 1.),
+        vec2<f32>(1, 0.),
+        vec2<f32>(1, 0.),
+        vec2<f32>(0, 0.),
+        vec2<f32>(0, 1.),
+    );
+    const normals = array(
+        // South
+        vec3<f32>(0., 0., 1.),
+        vec3<f32>(0., 0., 1.),
+        vec3<f32>(0., 0., 1.),
+        vec3<f32>(0., 0., 1.),
+        vec3<f32>(0., 0., 1.),
+        vec3<f32>(0., 0., 1.),
+        // North
+        vec3<f32>(0., 0., -1.),
+        vec3<f32>(0., 0., -1.),
+        vec3<f32>(0., 0., -1.),
+        vec3<f32>(0., 0., -1.),
+        vec3<f32>(0., 0., -1.),
+        vec3<f32>(0., 0., -1.),
+        // East
+        vec3<f32>(1., 0., 0.),
+        vec3<f32>(1., 0., 0.),
+        vec3<f32>(1., 0., 0.),
+        vec3<f32>(1., 0., 0.),
+        vec3<f32>(1., 0., 0.),
+        vec3<f32>(1., 0., 0.),
+        // West
+        vec3<f32>(-1., 0., 0.),
+        vec3<f32>(-1., 0., 0.),
+        vec3<f32>(-1., 0., 0.),
+        vec3<f32>(-1., 0., 0.),
+        vec3<f32>(-1., 0., 0.),
+        vec3<f32>(-1., 0., 0.),
+        // Up
+        vec3<f32>(0., 1., 0.),
+        vec3<f32>(0., 1., 0.),
+        vec3<f32>(0., 1., 0.),
+        vec3<f32>(0., 1., 0.),
+        vec3<f32>(0., 1., 0.),
+        vec3<f32>(0., 1., 0.),
+        // Down
+        vec3<f32>(0., -1., 0.),
+        vec3<f32>(0., -1., 0.),
+        vec3<f32>(0., -1., 0.),
+        vec3<f32>(0., -1., 0.),
+        vec3<f32>(0., -1., 0.),
+        vec3<f32>(0., -1., 0.),
+    );
+
+    let position = projection * model_view * vec4(positions[i], 1.0);
+    let uv = uvs[i];
+    let normal = (normal_transform * vec4(normals[i], 1.0)).xyz;
+
+    var output: VertexOut;
+    output.builtin_position = position;
+    output.position = position.xyz;
+    output.uv = uv;
+    output.normal = normal;
+
+    return output;
 }
 
 )";

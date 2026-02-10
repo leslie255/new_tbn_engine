@@ -20,9 +20,18 @@ constexpr uint32_t INIT_WINDOW_WIDTH = 720;
 constexpr uint32_t INIT_WINDOW_HEIGHT = 480;
 
 static std::string_view FRAGMENT_SHADER_CODE = R"(
-@fragment fn fs_main() -> @location(0) vec4<f32> {
-    return vec4(0.0, 0.53, 0.75, 1.0);
+
+struct VertexOut {
+    @builtin(position) builtin_position: vec4<f32>,
+    @location(0) position: vec3<f32>,
+    @location(1) uv: vec2<f32>,
+    @location(2) normal: vec3<f32>,
+};
+
+@fragment fn fs_main(vertex: VertexOut) -> @location(0) vec4<f32> {
+    return vec4(vertex.uv.x, vertex.uv.y, 0.28, 1.0);
 }
+
 )";
 
 static inline double unix_seconds() {
@@ -129,6 +138,8 @@ struct Application {
 
     wgpu::Surface surface;
     wgpu::TextureFormat surface_format;
+    wgpu::Texture depth_texture;
+    wgpu::TextureView depth_texture_view;
 
     PerspectiveCamera camera;
     CameraBindGroup camera_bind_group;
@@ -141,7 +152,7 @@ struct Application {
 
     void run() {
         this->initialize_wgpu();
-        this->initialize_window_and_surface();
+        this->initialize_window();
         this->configure_surface();
         this->create_render_pipeline();
 
@@ -231,6 +242,25 @@ struct Application {
         this->queue = this->device.GetQueue();
     }
 
+    void initialize_window() {
+        if (!glfwInit()) {
+            fmt::println("[ERROR] GLFW initialization error");
+            abort();
+        }
+
+        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+        this->window = glfwCreateWindow(
+            INIT_WINDOW_WIDTH,
+            INIT_WINDOW_HEIGHT,
+            "WebGPU Test",
+            nullptr,
+            nullptr);
+        this->surface = wgpu::glfw::CreateSurfaceForWindow(instance, window);
+        glfwSetWindowSizeCallback(this->window, Application::window_resize_callback);
+
+        glfwSetWindowUserPointer(this->window, this);
+    }
+
     void configure_surface() {
         wgpu::SurfaceCapabilities capabilities;
         this->surface.GetCapabilities(this->adapter, &capabilities);
@@ -267,6 +297,21 @@ struct Application {
             .height = height,
         };
         surface.Configure(&surface_configuration);
+
+        // Re-create depth texture.
+        auto depth_texture_descriptor = wgpu::TextureDescriptor {
+            .label = "Depth Texture"sv,
+            .usage = wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::TextureBinding,
+            .dimension = wgpu::TextureDimension::e2D,
+            .size = wgpu::Extent3D {
+                .width = width,
+                .height = height,
+                .depthOrArrayLayers = 1,
+            },
+            .format = wgpu::TextureFormat::Depth16Unorm,
+        };
+        this->depth_texture = this->device.CreateTexture(&depth_texture_descriptor);
+        this->depth_texture_view = this->depth_texture.CreateView();
     }
 
     void create_render_pipeline() {
@@ -303,10 +348,16 @@ struct Application {
             this->device.CreateShaderModule(&fragment_shader_module_descriptor);
 
         // Pipeline.
+        auto vertex_state = this->geometry.create_vertex_state(this->device);
         auto color_target_state = wgpu::ColorTargetState {
             .format = surface_format,
             .blend = nullptr,
             .writeMask = wgpu::ColorWriteMask::All,
+        };
+        auto depth_stencil_state = wgpu::DepthStencilState {
+            .format = wgpu::TextureFormat::Depth16Unorm,
+            .depthWriteEnabled = true,
+            .depthCompare = wgpu::CompareFunction::Less,
         };
         auto fragment_state = wgpu::FragmentState {
             .module = fragment_shader_module,
@@ -315,10 +366,10 @@ struct Application {
             .targetCount = 1,
             .targets = &color_target_state,
         };
-        auto vertex_state = this->geometry.create_vertex_state(this->device);
         auto pipeline_descriptor = wgpu::RenderPipelineDescriptor {
             .layout = pipeline_layout,
             .vertex = vertex_state,
+            .depthStencil = &depth_stencil_state,
             .fragment = &fragment_state,
         };
         this->pipeline = this->device.CreateRenderPipeline(&pipeline_descriptor);
@@ -337,25 +388,6 @@ struct Application {
         this->queue.WriteBuffer(uniform_buffer, 0, &identity4x4, sizeof(identity4x4));
     }
 
-    void initialize_window_and_surface() {
-        if (!glfwInit()) {
-            fmt::println("[ERROR] GLFW initialization error");
-            abort();
-        }
-
-        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        this->window = glfwCreateWindow(
-            INIT_WINDOW_WIDTH,
-            INIT_WINDOW_HEIGHT,
-            "WebGPU Test",
-            nullptr,
-            nullptr);
-        this->surface = wgpu::glfw::CreateSurfaceForWindow(instance, window);
-        glfwSetWindowSizeCallback(this->window, Application::window_resize_callback);
-
-        glfwSetWindowUserPointer(this->window, this);
-    }
-
     void draw_frame() {
         wgpu::SurfaceTexture surface_texture;
         surface.GetCurrentTexture(&surface_texture);
@@ -369,26 +401,34 @@ struct Application {
 
         auto view = this->camera.view_matrix();
 
-        float period = 2;
+        auto period = 2.0;
         auto rotation = (float)fmod(unix_seconds() / period, glm::two_pi<double>());
         auto cube_size = glm::vec3(60, 60, 60);
         auto model = glm::identity<glm::mat4x4>();
         model = glm::rotate(model, rotation, glm::vec3(0, 1, 0)),
-        model = glm::rotate(model, rotation - glm::pi<float>(), glm::vec3(0, 0, 1)),
+        model = glm::rotate(model, rotation - glm::pi<float>(), glm::vec3(1, 0, 0)),
         model = glm::translate(model, -0.5f * cube_size);
         model = glm::scale(model, cube_size);
         this->geometry.set_model_view(this->queue, model, view);
 
         auto encoder = this->device.CreateCommandEncoder();
-        auto attachment = wgpu::RenderPassColorAttachment {
+        auto color_attachment = wgpu::RenderPassColorAttachment {
             .view = surface_texture_view,
             .loadOp = wgpu::LoadOp::Clear,
             .storeOp = wgpu::StoreOp::Store,
             .clearValue = wgpu::Color {0.0, 0.0, 0.0, 0.0},
         };
+        auto depth_stencil_attachment = wgpu::RenderPassDepthStencilAttachment {
+            .view = this->depth_texture_view,
+            .depthLoadOp = wgpu::LoadOp::Clear,
+            .depthStoreOp = wgpu::StoreOp::Store,
+            .depthClearValue = 1.0,
+            .depthReadOnly = false,
+        };
         auto render_pass_descriptor = wgpu::RenderPassDescriptor {
             .colorAttachmentCount = 1,
-            .colorAttachments = &attachment,
+            .colorAttachments = &color_attachment,
+            .depthStencilAttachment = &depth_stencil_attachment,
         };
         auto render_pass = encoder.BeginRenderPass(&render_pass_descriptor);
 
