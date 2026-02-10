@@ -26,6 +26,7 @@ set(CMAKE_CXX_FLAGS_DEBUG "-O0")
 
 add_executable(app
   "sources/main.cxx"
+  "sources/log.cxx"
   "sources/geometry/base.cxx"
   "sources/geometry/box.cxx"
   "sources/material/base.cxx"

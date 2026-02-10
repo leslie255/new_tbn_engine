@@ -40,6 +40,8 @@ struct GeometryBase {
     virtual void set_model_view(const wgpu::Queue& queue, glm::mat4x4 model, glm::mat4x4 view);
 
     virtual DrawParameters draw_parameters() const;
+
+    virtual ~GeometryBase() = default;
 };
 
 template <class T>
@@ -51,9 +53,10 @@ concept is_geometry = requires(T* a) {
         ((const T*)a)->create_bind_group_layout(std::declval<const wgpu::Device&>())
     } -> std::same_as<wgpu::BindGroupLayout>;
     {
-        ((const T*)a)->create_bind_group(
-            std::declval<const wgpu::Device&>(),
-            std::declval<wgpu::BindGroupLayout>())
+        ((const T*)a)
+            ->create_bind_group(
+                std::declval<const wgpu::Device&>(),
+                std::declval<wgpu::BindGroupLayout>())
     } -> std::same_as<wgpu::BindGroup>;
     {
         a->set_model_view(

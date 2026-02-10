@@ -6,22 +6,31 @@ ColorMaterial::ColorMaterial(
     const wgpu::Device& device,
     const wgpu::Queue& queue,
     glm::vec3 fill_color) {
-    auto buffer_descriptor = wgpu::BufferDescriptor {
+    auto mat4x4_buffer_descriptor = wgpu::BufferDescriptor {
         .usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
         .size = sizeof(float[4][4]),
         .mappedAtCreation = false,
     };
     // They're all 4x4 matrices so can share the same descriptor.
-    this->color = device.CreateBuffer(&buffer_descriptor);
-    this->view_position = device.CreateBuffer(&buffer_descriptor);
-    this->light_position = device.CreateBuffer(&buffer_descriptor);
+    this->color = device.CreateBuffer(&mat4x4_buffer_descriptor);
+    this->view_position = device.CreateBuffer(&mat4x4_buffer_descriptor);
+    this->light_position = device.CreateBuffer(&mat4x4_buffer_descriptor);
+
+    auto phong_buffer_descriptor = wgpu::BufferDescriptor {
+        .usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
+        .size = sizeof(PhongParameters),
+        .mappedAtCreation = false,
+    };
+    this->phong = device.CreateBuffer(&phong_buffer_descriptor);
 
     queue.WriteBuffer(this->color, 0, &fill_color, sizeof(fill_color));
 
-    // Zero-initialise positions for sanity sake.
     auto vec3_zero = glm::vec3(0, 0, 0);
     queue.WriteBuffer(this->view_position, 0, &vec3_zero, sizeof(glm::vec3));
     queue.WriteBuffer(this->light_position, 0, &vec3_zero, sizeof(glm::vec3));
+
+    auto phong_default = PhongParameters {};
+    queue.WriteBuffer(this->phong, 0, &phong_default, sizeof(phong_default));
 }
 
 void ColorMaterial::set_color(const wgpu::Queue& queue, glm::vec3 value) {
@@ -36,6 +45,10 @@ void ColorMaterial::set_light_position(const wgpu::Queue& queue, glm::vec3 value
     queue.WriteBuffer(this->light_position, 0, &value, sizeof(value));
 }
 
+void ColorMaterial::set_phong_parameters(const wgpu::Queue& queue, PhongParameters value) {
+    queue.WriteBuffer(this->phong, 0, &value, sizeof(value));
+}
+
 static std::string_view SHADER_CODE = R"(
 
 struct VertexOut {
@@ -45,9 +58,18 @@ struct VertexOut {
     @location(2) normal: vec3<f32>,
 };
 
+struct PhongParameters {
+    ambient_strength: f32,
+    diffuse_strength: f32,
+    specular_strength: f32,
+    specular_intensity: f32,
+    light_color: vec3<f32>,
+};
+
 @group(2) @binding(0) var<uniform> fill_color: vec3<f32>;
 @group(2) @binding(1) var<uniform> view_position: vec3<f32>;
 @group(2) @binding(2) var<uniform> light_position: vec3<f32>;
+@group(2) @binding(3) var<uniform> phong: PhongParameters;
 
 @fragment fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
     let normal = normalize(input.normal);
@@ -125,6 +147,16 @@ wgpu::BindGroupLayout ColorMaterial::create_bind_group_layout(const wgpu::Device
                     .minBindingSize = sizeof(glm::vec3),
                 },
         },
+        wgpu::BindGroupLayoutEntry {
+            .binding = 3,
+            .visibility = wgpu::ShaderStage::Fragment,
+            .buffer =
+                wgpu::BufferBindingLayout {
+                    .type = wgpu::BufferBindingType::Uniform,
+                    .hasDynamicOffset = false,
+                    .minBindingSize = sizeof(PhongParameters),
+                },
+        },
     };
     auto descriptor = wgpu::BindGroupLayoutDescriptor {
         .label = "Color Material"sv,
@@ -155,6 +187,12 @@ wgpu::BindGroup ColorMaterial::create_bind_group(
             .buffer = this->light_position,
             .offset = 0,
             .size = sizeof(glm::vec3),
+        },
+        wgpu::BindGroupEntry {
+            .binding = 3,
+            .buffer = this->phong,
+            .offset = 0,
+            .size = sizeof(PhongParameters),
         },
     };
     auto descriptor = wgpu::BindGroupDescriptor {

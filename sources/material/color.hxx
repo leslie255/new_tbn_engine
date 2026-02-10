@@ -9,6 +9,7 @@ class ColorMaterial : public MaterialBase {
     wgpu::Buffer color;          // uniform, binding 0, vec3<f32>
     wgpu::Buffer view_position;  // uniform, binding 1, vec3<f32>
     wgpu::Buffer light_position; // uniform, binding 2, vec3<f32>
+    wgpu::Buffer phong;          // uniform, binding 3, PhongParameters
 
   public:
     ColorMaterial() = default;
@@ -23,6 +24,8 @@ class ColorMaterial : public MaterialBase {
     void set_view_position(const wgpu::Queue& queue, glm::vec3 value);
 
     void set_light_position(const wgpu::Queue& queue, glm::vec3 value);
+
+    void set_phong_parameters(const wgpu::Queue& queue, PhongParameters value);
 
     ShaderInfo create_fragment_shader(const wgpu::Device& device) const override;
 

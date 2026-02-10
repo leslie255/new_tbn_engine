@@ -1,6 +1,5 @@
 #include <GLFW/glfw3.h>
 #include <dawn/webgpu_cpp_print.h>
-#include <fmt/format.h>
 #include <fmt/ostream.h>
 #include <glm/ext/matrix_transform.hpp>
 #include <glm/gtc/color_space.hpp>
@@ -10,6 +9,7 @@
 
 #include "camera/perspective.hxx"
 #include "geometry/box.hxx"
+#include "log.hxx"
 #include "material/color.hxx"
 
 using namespace std::literals;
@@ -94,14 +94,12 @@ struct ObjectPipeline {
 
     ObjectPipeline() = default;
 
-    template <class Geometry, class Material>
-        requires is_geometry<Geometry> && is_material<Material>
     ObjectPipeline(
         const wgpu::Device& device,
         wgpu::TextureFormat surface_format,
         const CameraBindGroup& camera_bind_group,
-        const Geometry& geometry,
-        const Material& material) {
+        const GeometryBase& geometry,
+        const MaterialBase& material) {
         // Bind group layouts.
         auto camera_bind_group_layout = camera_bind_group.layout;
         auto geometry_bind_group_layout = geometry.create_bind_group_layout(device);
@@ -197,7 +195,7 @@ struct Application {
     PerspectiveCamera camera;
     CameraBindGroup camera_bind_group;
 
-    BoxGeometry geometry;
+    std::unique_ptr<GeometryBase> geometry;
     ColorMaterial material;
     ObjectPipeline pipeline;
 
@@ -248,7 +246,7 @@ struct Application {
                 wgpu::Adapter adapter,
                 wgpu::StringView message) {
                 if (status != wgpu::RequestAdapterStatus::Success) {
-                    fmt::println("[ERROR] error requesting adapter: {}", fmt::streamed(message));
+                    log_error("error requesting adapter: {}", fmt::streamed(message));
                     abort();
                 }
                 this->adapter = std::move(adapter);
@@ -259,8 +257,8 @@ struct Application {
         wgpu::DeviceDescriptor device_descriptor {};
         device_descriptor.SetUncapturedErrorCallback(
             [](const wgpu::Device&, wgpu::ErrorType error_type, wgpu::StringView message) {
-                fmt::println(
-                    "[Error] webgpu (dawn) error type: {}, message: {}",
+                log_error(
+                    "webgpu (dawn) error type: {}, message: {}",
                     fmt::streamed(error_type),
                     fmt::streamed(message));
                 __builtin_trap();
@@ -269,10 +267,10 @@ struct Application {
             wgpu::CallbackMode::AllowSpontaneous,
             [](const wgpu::Device&, wgpu::DeviceLostReason reason, wgpu::StringView message) {
                 if (reason == wgpu::DeviceLostReason::Destroyed) {
-                    fmt::println("[VERBOSE] webgpu (dawn) device destroyed peacefully");
+                    log_verbose("webgpu (dawn) device destroyed peacefully");
                 } else {
-                    fmt::println(
-                        "[WARN] webgpu (dawn) device lost, reason: {}, message: {}",
+                    log_warn(
+                        "webgpu (dawn) device lost, reason: {}, message: {}",
                         fmt::streamed(reason),
                         fmt::streamed(message));
                 }
@@ -282,9 +280,7 @@ struct Application {
             wgpu::CallbackMode::WaitAnyOnly,
             [&](wgpu::RequestDeviceStatus status, wgpu::Device device, wgpu::StringView message) {
                 if (status != wgpu::RequestDeviceStatus::Success) {
-                    fmt::println(
-                        "[ERROR] webgpu (dawn) request device error: {}",
-                        fmt::streamed(message));
+                    log_error("webgpu (dawn) request device error: {}", fmt::streamed(message));
                     __builtin_trap();
                 }
                 this->device = std::move(device);
@@ -297,7 +293,7 @@ struct Application {
 
     void initialize_window() {
         if (!glfwInit()) {
-            fmt::println("[ERROR] GLFW initialization error");
+            log_error("GLFW initialization error");
             abort();
         }
 
@@ -320,7 +316,7 @@ struct Application {
         auto supported_formats = std::span(capabilities.formats, capabilities.formatCount);
         for (wgpu::TextureFormat format :
              std::span(capabilities.formats, capabilities.formatCount)) {
-            fmt::println("[VERBOSE] detected supported surface format: {}", fmt::streamed(format));
+            log_verbose("detected supported surface format: {}", fmt::streamed(format));
             if (format == wgpu::TextureFormat::RGBA8UnormSrgb ||
                 format == wgpu::TextureFormat::BGRA8UnormSrgb) {
                 this->surface_format = format;
@@ -328,17 +324,15 @@ struct Application {
         }
         if (this->surface_format == wgpu::TextureFormat::Undefined) {
             if (supported_formats.size() == 0) {
-                fmt::println(
-                    "[WARN] cannot find a any supported surface format, using RGBA8UnormSrgb");
-                this->surface_format = wgpu::TextureFormat::RGBA8UnormSrgb;
+                log_warn("cannot find any supported surface format, using BGRA8UnormSrgb");
+                this->surface_format = wgpu::TextureFormat::BGRA8UnormSrgb;
             } else {
-                fmt::println(
-                    "[WARN] cannot find a any suitable surface format, using the first availible "
-                    "one instead");
+                log_warn("cannot find a suitable surface format, using the first available "
+                         "one instead");
                 this->surface_format = capabilities.formats[0];
             }
         }
-        fmt::println("[INFO] chosen surface format {}", fmt::streamed(this->surface_format));
+        log_info("chosen surface format {}", fmt::streamed(this->surface_format));
         this->reconfigure_surface_for_resize(INIT_WINDOW_WIDTH, INIT_WINDOW_HEIGHT);
     }
 
@@ -373,7 +367,7 @@ struct Application {
         this->camera_bind_group = CameraBindGroup(this->device, this->queue);
 
         // Geometry.
-        this->geometry = BoxGeometry(this->device, this->queue);
+        this->geometry = std::make_unique<BoxGeometry>(this->device, this->queue);
 
         // Material.
         this->material = ColorMaterial(
@@ -386,7 +380,7 @@ struct Application {
             this->device,
             this->surface_format,
             this->camera_bind_group,
-            this->geometry,
+            *this->geometry,
             this->material);
     }
 
@@ -413,7 +407,7 @@ struct Application {
         model = glm::rotate(model, rotation - glm::pi<float>(), glm::vec3(1, 0, 0)),
         model = glm::translate(model, -0.5f * cube_size);
         model = glm::scale(model, cube_size);
-        this->geometry.set_model_view(this->queue, model, view);
+        this->geometry->set_model_view(this->queue, model, view);
 
         auto encoder = this->device.CreateCommandEncoder();
         auto color_attachment = wgpu::RenderPassColorAttachment {
@@ -437,7 +431,7 @@ struct Application {
         auto render_pass = encoder.BeginRenderPass(&render_pass_descriptor);
 
         render_pass.SetBindGroup(0, this->camera_bind_group.wgpu_bind_group);
-        this->pipeline.draw_commands(render_pass, this->geometry);
+        this->pipeline.draw_commands(render_pass, *this->geometry);
         render_pass.End();
 
         auto command_buffer = encoder.Finish();
@@ -451,6 +445,8 @@ struct Application {
 };
 
 int main() {
-    auto application = Application {};
-    application.run();
+    log_level_scope(LogLevel::Verbose, [&] {
+        auto application = Application {};
+        application.run();
+    });
 }
