@@ -18,10 +18,14 @@ using namespace std::literals;
 
 #if defined(__EMSCRIPTEN__)
 #include <emscripten/emscripten.h>
+#include <emscripten/html5.h>
+EM_JS(int32_t, web_init_width, (), {
+    return initWidth;
+});
+EM_JS(int32_t, web_init_height, (), {
+    return initHeight;
+});
 #endif
-
-constexpr uint32_t INIT_WINDOW_WIDTH = 720;
-constexpr uint32_t INIT_WINDOW_HEIGHT = 480;
 
 static inline double unix_seconds() {
     using namespace std::chrono;
@@ -208,9 +212,16 @@ struct Application {
         }
 
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+#if defined(__EMSCRIPTEN__)
+        auto init_width = (uint32_t)web_init_width();
+        auto init_height = (uint32_t)web_init_height();
+#else
+        auto init_width = 720;
+        auto init_height = 480;
+#endif
         this->window = glfwCreateWindow(
-            INIT_WINDOW_WIDTH,
-            INIT_WINDOW_HEIGHT,
+            init_width,
+            init_height,
             "WebGPU Test",
             nullptr,
             nullptr

@@ -71,6 +71,8 @@
 </div>
 
 <script>
+  var initWidth = window.innerWidth * window.devicePixelRatio;
+  var initHeight = window.innerHeight * window.devicePixelRatio;
   var Module = {
     totalDependencies: 0,
 
@@ -116,6 +118,11 @@
     canvas.style.height = canvas.clientHeight + "px";
 
     Module.setCanvasSize(width, height)
+
+    console.log("resize listeners:", Browser.resizeListeners);
+    console.log("GLFW active:", GLFW.active);
+    Browser.resizeListeners.forEach((listener) => listener(width, height));
+    GLFW.onCanvasResize(canvas.clientWidth, canvas.clientHeight, width, height);
   }
 
   // Resize on window change
