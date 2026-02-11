@@ -35,7 +35,7 @@ class Entity {
 
     void set_model(glm::mat4x4 model_matrix);
 
-    void prepare_for_drawing(const wgpu::Queue& queue, glm::mat4x4 view_matrix);
+    void prepare_for_drawing(const wgpu::Queue& queue, glm::vec3 view_position, glm::mat4x4 view_matrix);
 
     void draw_commands(wgpu::RenderPassEncoder& render_pass);
 };

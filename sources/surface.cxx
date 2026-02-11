@@ -1,9 +1,9 @@
 #include <fmt/base.h>
-
-#include "surface.hxx"
-
 #include <span>
 #include <webgpu/webgpu_glfw.h>
+
+#include "log.hxx"
+#include "surface.hxx"
 
 using namespace std::literals;
 
@@ -74,6 +74,7 @@ WindowSurface::WindowSurface(
     this->surface = wgpu::glfw::CreateSurfaceForWindow(instance, window);
 
     glfwGetFramebufferSize(window, (int32_t*)&this->width, (int32_t*)&this->height);
+    log_verbose("detected initial window size: {}x{}", this->width, this->height);
     if (this->width == 0)
         this->width = 480;
     if (this->height == 0)

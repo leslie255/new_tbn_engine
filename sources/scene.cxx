@@ -142,13 +142,16 @@ void Scene::draw(const Surface& surface) {
     };
     auto render_pass = encoder.BeginRenderPass(&render_pass_descriptor);
 
+    glm::vec3 view_position;
     glm::mat4x4 view_matrix;
     glm::mat4x4 projection_matrix;
     if (this->camera != nullptr) {
+        view_position = this->camera->view_position();
         view_matrix = this->camera->view_matrix();
         projection_matrix =
             this->camera->projection_matrix((float)surface.width, (float)surface.height);
     } else {
+        view_position = glm::vec3(0, 0, 0);
         view_matrix = glm::identity<glm::mat4x4>();
         projection_matrix = glm::identity<glm::mat4x4>();
     }
@@ -160,7 +163,7 @@ void Scene::draw(const Surface& surface) {
 
     for (auto& entity : this->entities) {
         if (entity != nullptr) {
-            entity.prepare_for_drawing(this->queue, view_matrix);
+            entity.prepare_for_drawing(this->queue, view_position, view_matrix);
             entity.draw_commands(render_pass);
         }
     }

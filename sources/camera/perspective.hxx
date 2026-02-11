@@ -14,4 +14,5 @@ struct PerspectiveCamera : public CameraBase {
 
     glm::mat4x4 projection_matrix(float width, float height) const override;
     glm::mat4x4 view_matrix() const override;
+    glm::vec3 view_position() const override;
 };

@@ -22,9 +22,9 @@ class ColorMaterial : public MaterialBase {
 
     void set_color(const wgpu::Queue& queue, glm::vec3 value);
 
-    void set_view_position(const wgpu::Queue& queue, glm::vec3 value);
+    void update_view_position(const wgpu::Queue& queue, glm::vec3 view_position) override;
 
-    void set_light_position(const wgpu::Queue& queue, glm::vec3 value);
+    void update_light_position(const wgpu::Queue& queue, glm::vec3 light_position) override;
 
     void set_phong_parameters(const wgpu::Queue& queue, PhongParameters value);
 

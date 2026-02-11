@@ -38,11 +38,11 @@ void ColorMaterial::set_color(const wgpu::Queue& queue, glm::vec3 value) {
     queue.WriteBuffer(this->color, 0, &value, sizeof(value));
 }
 
-void ColorMaterial::set_view_position(const wgpu::Queue& queue, glm::vec3 value) {
+void ColorMaterial::update_view_position(const wgpu::Queue& queue, glm::vec3 value) {
     queue.WriteBuffer(this->view_position, 0, &value, sizeof(value));
 }
 
-void ColorMaterial::set_light_position(const wgpu::Queue& queue, glm::vec3 value) {
+void ColorMaterial::update_light_position(const wgpu::Queue& queue, glm::vec3 value) {
     queue.WriteBuffer(this->light_position, 0, &value, sizeof(value));
 }
 
@@ -95,7 +95,12 @@ struct PhongParameters {
     let specular_term = specular_strength * specular_factor * light_color;
 
     let color = ambient_term + diffuse_term + specular_term;
-    return vec4<f32>(color, 1.0);
+    return vec4<f32>(
+        pow(color.r, 1.0 / 2.2),
+        pow(color.g, 1.0 / 2.2),
+        pow(color.b, 1.0 / 2.2),
+        1.0,
+    );
 }
 
 )";

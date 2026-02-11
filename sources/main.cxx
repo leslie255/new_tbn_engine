@@ -28,6 +28,10 @@ static inline double unix_seconds() {
     return duration<double>(system_clock::now().time_since_epoch()).count();
 }
 
+static inline glm::vec3 srgb(float r, float g, float b) {
+    return glm::convertSRGBToLinear(glm::vec3(r, g, b));
+}
+
 struct CameraBindGroup {
     wgpu::BindGroup wgpu_bind_group;
     wgpu::BindGroupLayout layout;
@@ -101,10 +105,8 @@ struct Application {
 
     Scene scene;
 
-    std::shared_ptr<BoxGeometry> geometry;
-    std::shared_ptr<ColorMaterial> material;
-
-    EntityId entity;
+    EntityId cube0;
+    EntityId cube1;
 
     GLFWwindow* window;
 
@@ -161,7 +163,7 @@ struct Application {
         device_descriptor.SetUncapturedErrorCallback(
             [](const wgpu::Device&, wgpu::ErrorType error_type, wgpu::StringView message) {
                 log_error(
-                    "webgpu (dawn) error type: {}, message: {}",
+                    "webgpu error type: {}, message: {}",
                     fmt::streamed(error_type),
                     fmt::streamed(message)
                 );
@@ -172,10 +174,10 @@ struct Application {
             wgpu::CallbackMode::AllowSpontaneous,
             [](const wgpu::Device&, wgpu::DeviceLostReason reason, wgpu::StringView message) {
                 if (reason == wgpu::DeviceLostReason::Destroyed) {
-                    log_verbose("webgpu (dawn) device destroyed peacefully");
+                    log_verbose("webgpu device destroyed peacefully");
                 } else {
                     log_warn(
-                        "webgpu (dawn) device lost, reason: {}, message: {}",
+                        "webgpu device lost, reason: {}, message: {}",
                         fmt::streamed(reason),
                         fmt::streamed(message)
                     );
@@ -187,7 +189,7 @@ struct Application {
             wgpu::CallbackMode::WaitAnyOnly,
             [&](wgpu::RequestDeviceStatus status, wgpu::Device device, wgpu::StringView message) {
                 if (status != wgpu::RequestDeviceStatus::Success) {
-                    log_error("webgpu (dawn) request device error: {}", fmt::streamed(message));
+                    log_error("webgpu request device error: {}", fmt::streamed(message));
                     __builtin_trap();
                 }
                 this->device = std::move(device);
@@ -213,6 +215,7 @@ struct Application {
             nullptr,
             nullptr
         );
+
         this->window_surface = WindowSurface(
             this->instance,
             this->adapter,
@@ -223,9 +226,10 @@ struct Application {
                 .depth_stencil_format = wgpu::TextureFormat::Depth16Unorm,
             }
         );
-        glfwSetWindowSizeCallback(this->window, Application::window_resize_callback);
 
         glfwSetWindowUserPointer(this->window, this);
+        glfwSetWindowSizeCallback(this->window, Application::window_resize_callback);
+        glfwSetFramebufferSizeCallback(this->window, Application::framebuffer_resize_callback);
     }
 
     void initialize_scene() {
@@ -236,40 +240,66 @@ struct Application {
         this->scene = Scene(this->device, this->queue, this->window_surface.get_format());
         this->scene.set_camera(this->camera);
 
-        // Geometry.
-        this->geometry = std::make_shared<BoxGeometry>(this->device, this->queue);
+        auto light_position = glm::vec3(400, 400, -400);
+        auto geometry0 = std::make_shared<BoxGeometry>(this->device, this->queue);
+        auto material0 =
+            std::make_shared<ColorMaterial>(this->device, this->queue, srgb(0.3, 0.6, 0.7));
+        material0->update_light_position(this->queue, light_position);
+        this->cube0 = this->scene.create_entity(geometry0, material0);
 
-        // Material.
-        this->material = std::make_shared<ColorMaterial>(
-            this->device,
-            this->queue,
-            glm::convertSRGBToLinear(glm::vec3(0, 0.5, 0.5))
-        );
-        this->material->set_light_position(this->queue, glm::vec3(400, 400, -400));
-
-        this->scene.create_entity(this->geometry, this->material);
+        auto geometry1 = std::make_shared<BoxGeometry>(this->device, this->queue);
+        auto material1 =
+            std::make_shared<ColorMaterial>(this->device, this->queue, srgb(0.7, 0.4, 0.6));
+        material1->update_light_position(this->queue, light_position);
+        this->cube1 = this->scene.create_entity(geometry1, material1);
     }
 
     void draw_frame() {
+        double tau = glm::tau<double>();
+        double t = unix_seconds();
+        {
+            double period = 6.0;
+            float rotation = (float)fmod(t * tau / period, tau);
+
+            auto size = glm::vec3(60, 60, 60);
+            auto position = glm::vec3(-50, 0, 0);
+            auto model = glm::identity<glm::mat4x4>();
+
+            model = glm::translate(model, position);
+            model = glm::rotate(model, rotation - glm::pi<float>(), glm::vec3(1, 0, 0));
+            model = glm::rotate(model, rotation, glm::vec3(0, 1, 0));
+            model = glm::translate(model, -0.5f * size);
+            model = glm::scale(model, size);
+
+            this->scene.get_entity(this->cube0).set_model(model);
+        }
+
+        {
+            double period = 3.0;
+            float rotation = (float)fmod(t * tau / period, tau);
+
+            auto size = glm::vec3(30, 30, 30);
+            auto position = glm::vec3(50, 0, 20);
+            auto model = glm::identity<glm::mat4x4>();
+
+            model = glm::translate(model, position);
+            model = glm::rotate(model, rotation - glm::pi<float>(), glm::vec3(1, 0, 0));
+            model = glm::rotate(model, rotation, glm::vec3(0, 1, 0));
+            model = glm::translate(model, -0.5f * size);
+            model = glm::scale(model, size);
+
+            this->scene.get_entity(this->cube1).set_model(model);
+        }
+
         auto surface = this->window_surface.get_current_surface();
-
-        this->material->set_view_position(this->queue, this->camera->position);
-
-        double period = 4.0;
-        auto rotation = (float)fmod(unix_seconds() / period, glm::two_pi<double>());
-        auto cube_size = glm::vec3(60, 60, 60);
-        auto model = glm::identity<glm::mat4x4>();
-        model = glm::rotate(model, rotation, glm::vec3(0, 1, 0)),
-        model = glm::rotate(model, rotation - glm::pi<float>(), glm::vec3(1, 0, 0)),
-        model = glm::translate(model, -0.5f * cube_size);
-        model = glm::scale(model, cube_size);
-        this->scene.get_entity(this->entity).set_model(model);
-
         this->scene.draw(surface);
     }
 
-    static void window_resize_callback(GLFWwindow* window, int32_t width, int32_t height) {
+    static void window_resize_callback(GLFWwindow*, int32_t, int32_t) {}
+
+    static void framebuffer_resize_callback(GLFWwindow* window, int32_t width, int32_t height) {
         auto this_ = (Application*)glfwGetWindowUserPointer(window);
+        log_verbose("resizing surface to {}x{}", width, height);
         this_->window_surface.reconfigure_for_size((uint32_t)width, (uint32_t)height);
     }
 };

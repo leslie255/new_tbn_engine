@@ -27,3 +27,7 @@ glm::mat4x4 PerspectiveCamera::view_matrix() const {
         this->up
     ); // up
 }
+
+glm::vec3 PerspectiveCamera::view_position() const {
+    return this->position;
+}

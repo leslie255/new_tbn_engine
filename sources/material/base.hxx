@@ -24,4 +24,8 @@ struct MaterialBase : public ObjectBase {
         const wgpu::Device& device,
         wgpu::BindGroupLayout layout
     ) const;
+
+    virtual void update_view_position(const wgpu::Queue& queue, glm::vec3 view_position);
+
+    virtual void update_light_position(const wgpu::Queue& queue, glm::vec3 light_position);
 };

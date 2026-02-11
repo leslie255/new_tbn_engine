@@ -78,7 +78,8 @@ void Entity::set_model(glm::mat4x4 model_matrix) {
     this->model_matrix = model_matrix;
 }
 
-void Entity::prepare_for_drawing(const wgpu::Queue& queue, glm::mat4x4 view_matrix) {
+void Entity::prepare_for_drawing(const wgpu::Queue& queue, glm::vec3 view_position, glm::mat4x4 view_matrix) {
+    this->material->update_view_position(queue, view_position);
     this->geometry->set_model_view(queue, this->model_matrix, view_matrix);
 }
 
