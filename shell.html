@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>TBN Engine Demo</title>
+  <meta name="description" content="Demo of the TBN Rendering Engine">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background: #000;
+      overflow: hidden;
+    }
+
+    #canvas {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: none;
+    }
+
+    #loading {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #000;
+      color: #fff;
+      font-family: system-ui, sans-serif;
+    }
+
+    #status {
+      margin-bottom: 16px;
+      font-size: 14px;
+      opacity: 0.8;
+    }
+
+    #progress {
+      width: 300px;
+      height: 6px;
+      background: #222;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    #progress-bar {
+      width: 0%;
+      height: 100%;
+      background: #4caf50;
+      transition: width 0.2s ease;
+    }
+  </style>
+</head>
+
+<body>
+
+<canvas id="canvas"></canvas>
+
+<div id="loading">
+  <div id="status">Initializing...</div>
+  <div id="progress">
+    <div id="progress-bar"></div>
+  </div>
+</div>
+
+<script>
+  var Module = {
+    totalDependencies: 0,
+
+    canvas: document.getElementById("canvas"),
+
+    setStatus: function(statusText) {
+      document.getElementById("status").textContent = statusText;
+    },
+
+    monitorRunDependencies: function(remainingCount) {
+      var total = Module.totalDependencies || 0;
+      var loaded = total - remainingCount;
+
+      if (remainingCount) {
+        var percent = total ? Math.floor((loaded / total) * 100) : 0;
+        document.getElementById("progress-bar").style.width = percent + "%";
+        Module.setStatus("Loading... " + percent + "%");
+      } else {
+        document.getElementById("progress-bar").style.width = "100%";
+        Module.setStatus("Starting...");
+      }
+    },
+
+    onRuntimeInitialized: function() {
+      document.getElementById("loading").style.display = "none";
+      var canvas = document.getElementById("canvas");
+      canvas.style.display = "block";
+      resizeCanvas();
+    },
+  };
+
+  function resizeCanvas() {
+    let canvas = Module.canvas;
+    let dpr = window.devicePixelRatio || 1;
+    let width = Math.floor(canvas.clientWidth * dpr);
+    let height = Math.floor(canvas.clientHeight * dpr);
+
+    console.log("[SHELL] resizing canvas to width", width, ", height", height)
+
+    canvas.width = width;
+    canvas.height = height;
+    canvas.style.width = canvas.clientWidth + "px";
+    canvas.style.height = canvas.clientHeight + "px";
+
+    Module.setCanvasSize(width, height)
+  }
+
+  // Resize on window change
+  window.addEventListener("resize", resizeCanvas);
+
+</script>
+
+{{{ SCRIPT }}}
+
+</body>
+</html>
