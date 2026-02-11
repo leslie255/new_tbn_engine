@@ -8,9 +8,11 @@
 #include <webgpu/webgpu_glfw.h>
 
 #include "camera/perspective.hxx"
+#include "entity.hxx"
 #include "geometry/box.hxx"
 #include "log.hxx"
 #include "material/color.hxx"
+#include "scene.hxx"
 
 using namespace std::literals;
 
@@ -87,109 +89,6 @@ struct CameraBindGroup {
     }
 };
 
-struct ObjectPipeline {
-    wgpu::RenderPipeline wgpu_pipeline;
-    wgpu::BindGroup geometry_bind_group;
-    wgpu::BindGroup material_bind_group;
-
-    ObjectPipeline() = default;
-
-    ObjectPipeline(
-        const wgpu::Device& device,
-        wgpu::TextureFormat surface_format,
-        const CameraBindGroup& camera_bind_group,
-        const GeometryBase& geometry,
-        const MaterialBase& material
-    ) {
-        // Bind group layouts.
-        auto camera_bind_group_layout = camera_bind_group.layout;
-        auto geometry_bind_group_layout = geometry.create_bind_group_layout(device);
-        auto material_bind_group_layout = material.create_bind_group_layout(device);
-        auto bind_group_layouts = std::array {
-            camera_bind_group_layout,
-            geometry_bind_group_layout,
-            material_bind_group_layout,
-        };
-
-        // Pipeline Layout.
-        auto pipeline_layout_descriptor = wgpu::PipelineLayoutDescriptor {
-            .bindGroupLayoutCount = bind_group_layouts.size(),
-            .bindGroupLayouts = bind_group_layouts.data(),
-        };
-        auto pipeline_layout = device.CreatePipelineLayout(&pipeline_layout_descriptor);
-
-        // Pipeline.
-        auto vertex_shader = geometry.create_vertex_shader(device);
-        auto vertex_state = wgpu::VertexState {
-            .module = vertex_shader.shader_module,
-            .entryPoint = wgpu::StringView(vertex_shader.entry_point),
-            .constantCount = vertex_shader.constants.size(),
-            .constants = vertex_shader.constants.data(),
-        };
-        auto color_target_state = wgpu::ColorTargetState {
-            .format = surface_format,
-            .blend = nullptr,
-            .writeMask = wgpu::ColorWriteMask::All,
-        };
-        auto depth_stencil_state = wgpu::DepthStencilState {
-            .format = wgpu::TextureFormat::Depth16Unorm,
-            .depthWriteEnabled = true,
-            .depthCompare = wgpu::CompareFunction::LessEqual,
-        };
-        auto fragment_shader = material.create_fragment_shader(device);
-        auto fragment_state = wgpu::FragmentState {
-            .module = fragment_shader.shader_module,
-            .entryPoint = wgpu::StringView(fragment_shader.entry_point),
-            .constantCount = fragment_shader.constants.size(),
-            .constants = fragment_shader.constants.data(),
-            .targetCount = 1,
-            .targets = &color_target_state,
-        };
-        auto pipeline_descriptor = wgpu::RenderPipelineDescriptor {
-            .layout = pipeline_layout,
-            .vertex = vertex_state,
-            .primitive = geometry.primitive_state(),
-            .depthStencil = &depth_stencil_state,
-            .fragment = &fragment_state,
-        };
-
-        this->wgpu_pipeline = device.CreateRenderPipeline(&pipeline_descriptor);
-        this->geometry_bind_group = geometry.create_bind_group(device, geometry_bind_group_layout);
-        this->material_bind_group = material.create_bind_group(device, material_bind_group_layout);
-    }
-
-    void draw_commands(wgpu::RenderPassEncoder& render_pass, const GeometryBase& geometry) {
-        render_pass.SetPipeline(this->wgpu_pipeline);
-        render_pass.SetBindGroup(1, this->geometry_bind_group);
-        render_pass.SetBindGroup(2, this->material_bind_group);
-        auto draw_parameters = geometry.draw_parameters();
-        if (const auto* parameters = std::get_if<DrawParametersIndexless>(&draw_parameters)) {
-            if (parameters->vertex_buffer != nullptr) {
-                render_pass.SetVertexBuffer(0, parameters->vertex_buffer);
-            }
-            render_pass.Draw(
-                parameters->vertex_count,
-                parameters->instance_count,
-                parameters->first_vertex,
-                parameters->first_instance
-            );
-        } else if (const auto* parameters = std::get_if<DrawParametersIndexed>(&draw_parameters)) {
-            assert(parameters->index_buffer != nullptr);
-            render_pass.SetIndexBuffer(parameters->index_buffer, parameters->index_format);
-            if (parameters->vertex_buffer != nullptr) {
-                render_pass.SetVertexBuffer(0, parameters->vertex_buffer);
-            }
-            render_pass.DrawIndexed(
-                parameters->index_count,
-                parameters->instance_count,
-                parameters->first_index,
-                parameters->base_vertex,
-                parameters->first_instance
-            );
-        }
-    }
-};
-
 struct Application {
     wgpu::Instance instance;
     wgpu::Adapter adapter;
@@ -197,27 +96,26 @@ struct Application {
     wgpu::Queue queue;
 
     wgpu::Surface surface;
-    wgpu::TextureFormat surface_format;
+    wgpu::TextureFormat surface_color_format;
     wgpu::Texture depth_texture;
-    wgpu::TextureView depth_texture_view;
+    wgpu::TextureFormat surface_depth_format;
 
-    PerspectiveCamera camera;
-    CameraBindGroup camera_bind_group;
+    std::shared_ptr<PerspectiveCamera> camera;
 
-    std::unique_ptr<GeometryBase> geometry;
-    ColorMaterial material;
-    ObjectPipeline pipeline;
+    Scene scene;
+
+    std::shared_ptr<BoxGeometry> geometry;
+    std::shared_ptr<ColorMaterial> material;
+
+    EntityId entity;
 
     GLFWwindow* window;
 
     void run() {
         this->initialize_wgpu();
         this->initialize_window();
-        this->configure_surface();
-        this->create_render_pipeline();
-
-        this->camera.position = glm::vec3(0, 0, 100);
-        this->camera.direction = glm::normalize(glm::vec3(0, 0., -1));
+        this->initialize_surface();
+        this->initialize_scene();
 
 #if defined(__EMSCRIPTEN__)
         emscripten_set_main_loop_arg(emscripten_main_loop, this, 0, true);
@@ -325,7 +223,7 @@ struct Application {
         glfwSetWindowUserPointer(this->window, this);
     }
 
-    void configure_surface() {
+    void initialize_surface() {
         wgpu::SurfaceCapabilities capabilities;
         this->surface.GetCapabilities(this->adapter, &capabilities);
         auto supported_formats = std::span(capabilities.formats, capabilities.formatCount);
@@ -334,33 +232,34 @@ struct Application {
             log_verbose("detected supported surface format: {}", fmt::streamed(format));
             if (format == wgpu::TextureFormat::RGBA8UnormSrgb ||
                 format == wgpu::TextureFormat::BGRA8UnormSrgb) {
-                this->surface_format = format;
+                this->surface_color_format = format;
             }
         }
-        if (this->surface_format == wgpu::TextureFormat::Undefined) {
+        if (this->surface_color_format == wgpu::TextureFormat::Undefined) {
             if (supported_formats.size() == 0) {
                 log_warn("cannot find any supported surface format, using BGRA8UnormSrgb");
-                this->surface_format = wgpu::TextureFormat::BGRA8UnormSrgb;
+                this->surface_color_format = wgpu::TextureFormat::BGRA8UnormSrgb;
             } else {
                 log_warn("cannot find a suitable surface format, using the first available "
                          "one instead");
-                this->surface_format = capabilities.formats[0];
+                this->surface_color_format = capabilities.formats[0];
             }
         }
-        log_info("chosen surface format {}", fmt::streamed(this->surface_format));
+        log_info("chosen surface format {}", fmt::streamed(this->surface_color_format));
         this->reconfigure_surface_for_resize(INIT_WINDOW_WIDTH, INIT_WINDOW_HEIGHT);
     }
 
     void reconfigure_surface_for_resize(uint32_t width, uint32_t height) {
         auto surface_configuration = wgpu::SurfaceConfiguration {
             .device = this->device,
-            .format = this->surface_format,
+            .format = this->surface_color_format,
             .width = width,
             .height = height,
         };
         surface.Configure(&surface_configuration);
 
         // Re-create depth texture.
+        this->surface_depth_format = wgpu::TextureFormat::Depth16Unorm;
         auto depth_texture_descriptor = wgpu::TextureDescriptor {
             .label = "Depth Texture"sv,
             .usage = wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::TextureBinding,
@@ -371,50 +270,47 @@ struct Application {
                     .height = height,
                     .depthOrArrayLayers = 1,
                 },
-            .format = wgpu::TextureFormat::Depth16Unorm,
+            .format = this->surface_depth_format,
         };
         this->depth_texture = this->device.CreateTexture(&depth_texture_descriptor);
-        this->depth_texture_view = this->depth_texture.CreateView();
     }
 
-    void create_render_pipeline() {
-        // Camera bind group.
-        this->camera_bind_group = CameraBindGroup(this->device, this->queue);
+    void initialize_scene() {
+        this->camera = std::make_shared<PerspectiveCamera>();
+        this->camera->position = glm::vec3(0, 0, 100);
+        this->camera->direction = glm::normalize(glm::vec3(0, 0., -1));
+
+        this->scene = Scene(
+            this->device,
+            this->queue,
+            this->surface_color_format,
+            this->surface_depth_format
+        );
+        this->scene.set_camera(this->camera);
 
         // Geometry.
-        this->geometry = std::make_unique<BoxGeometry>(this->device, this->queue);
+        this->geometry = std::make_shared<BoxGeometry>(this->device, this->queue);
 
         // Material.
-        this->material = ColorMaterial(
+        this->material = std::make_shared<ColorMaterial>(
             this->device,
             this->queue,
             glm::convertSRGBToLinear(glm::vec3(0, 0.5, 0.5))
         );
-        this->material.set_light_position(this->queue, glm::vec3(400, 400, -400));
+        this->material->set_light_position(this->queue, glm::vec3(400, 400, -400));
 
-        this->pipeline = ObjectPipeline(
-            this->device,
-            this->surface_format,
-            this->camera_bind_group,
-            *this->geometry,
-            this->material
-        );
+        this->scene.create_entity(this->geometry, this->material);
     }
 
     void draw_frame() {
         wgpu::SurfaceTexture surface_texture;
         surface.GetCurrentTexture(&surface_texture);
         auto surface_texture_view = surface_texture.texture.CreateView();
+        uint32_t frame_width;
+        uint32_t frame_height;
+        glfwGetWindowSize(this->window, (int32_t*)&frame_width, (int32_t*)&frame_height);
 
-        int32_t width;
-        int32_t height;
-        glfwGetWindowSize(this->window, &width, &height);
-        auto projection = this->camera.projection_matrix((float)width, (float)height);
-        this->camera_bind_group.set_projection(this->queue, projection);
-
-        auto view = this->camera.view_matrix();
-
-        this->material.set_view_position(this->queue, this->camera.position);
+        this->material->set_view_position(this->queue, this->camera->position);
 
         auto period = 4.0;
         auto rotation = (float)fmod(unix_seconds() / period, glm::two_pi<double>());
@@ -424,35 +320,14 @@ struct Application {
         model = glm::rotate(model, rotation - glm::pi<float>(), glm::vec3(1, 0, 0)),
         model = glm::translate(model, -0.5f * cube_size);
         model = glm::scale(model, cube_size);
-        this->geometry->set_model_view(this->queue, model, view);
+        this->scene.get_entity(this->entity).set_model(model);
 
-        auto encoder = this->device.CreateCommandEncoder();
-        auto color_attachment = wgpu::RenderPassColorAttachment {
-            .view = surface_texture_view,
-            .loadOp = wgpu::LoadOp::Clear,
-            .storeOp = wgpu::StoreOp::Store,
-            .clearValue = wgpu::Color {0.0, 0.0, 0.0, 0.0},
-        };
-        auto depth_stencil_attachment = wgpu::RenderPassDepthStencilAttachment {
-            .view = this->depth_texture_view,
-            .depthLoadOp = wgpu::LoadOp::Clear,
-            .depthStoreOp = wgpu::StoreOp::Store,
-            .depthClearValue = 1.0,
-            .depthReadOnly = false,
-        };
-        auto render_pass_descriptor = wgpu::RenderPassDescriptor {
-            .colorAttachmentCount = 1,
-            .colorAttachments = &color_attachment,
-            .depthStencilAttachment = &depth_stencil_attachment,
-        };
-        auto render_pass = encoder.BeginRenderPass(&render_pass_descriptor);
-
-        render_pass.SetBindGroup(0, this->camera_bind_group.wgpu_bind_group);
-        this->pipeline.draw_commands(render_pass, *this->geometry);
-        render_pass.End();
-
-        auto command_buffer = encoder.Finish();
-        this->device.GetQueue().Submit(1, &command_buffer);
+        this->scene.draw(Scene::DrawInfo {
+            .color_texture = surface_texture_view,
+            .depth_stencil_texture = this->depth_texture.CreateView(),
+            .frame_width = frame_width,
+            .frame_height = frame_height,
+        });
     }
 
     static void window_resize_callback(GLFWwindow* window, int32_t width, int32_t height) {

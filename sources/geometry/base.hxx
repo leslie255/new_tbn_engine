@@ -4,6 +4,7 @@
 #include <glm/matrix.hpp>
 #include <webgpu/webgpu_cpp.h>
 
+#include "../object_base.hxx"
 #include "../shader_info.hxx"
 
 struct DrawParametersIndexed {
@@ -29,7 +30,7 @@ struct DrawParametersIndexless {
 
 using DrawParameters = std::variant<DrawParametersIndexed, DrawParametersIndexless>;
 
-struct GeometryBase {
+struct GeometryBase : public ObjectBase {
     virtual ShaderInfo create_vertex_shader(const wgpu::Device& device) const;
 
     virtual wgpu::BindGroupLayout create_bind_group_layout(const wgpu::Device& device) const;
@@ -44,6 +45,4 @@ struct GeometryBase {
     virtual void set_model_view(const wgpu::Queue& queue, glm::mat4x4 model, glm::mat4x4 view);
 
     virtual DrawParameters draw_parameters() const;
-
-    virtual ~GeometryBase() = default;
 };

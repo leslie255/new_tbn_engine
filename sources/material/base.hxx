@@ -3,6 +3,7 @@
 #include <glm/vec3.hpp>
 #include <webgpu/webgpu_cpp.h>
 
+#include "../object_base.hxx"
 #include "../shader_info.hxx"
 
 /// alignas(16) to be compatible with WGSL struct of the same topology.
@@ -14,7 +15,7 @@ struct alignas(16) PhongParameters {
     glm::vec3 light_color = glm::vec3(1.0, 1.0, 1.0);
 };
 
-struct MaterialBase {
+struct MaterialBase : public ObjectBase {
     virtual ShaderInfo create_fragment_shader(const wgpu::Device& device) const;
 
     virtual wgpu::BindGroupLayout create_bind_group_layout(const wgpu::Device& device) const;
@@ -23,6 +24,4 @@ struct MaterialBase {
         const wgpu::Device& device,
         wgpu::BindGroupLayout layout
     ) const;
-
-    virtual ~MaterialBase() = default;
 };

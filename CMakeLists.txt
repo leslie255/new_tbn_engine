@@ -13,15 +13,7 @@ set(CMAKE_CXX_EXTENSIONS ON)
 
 add_compile_options("-fno-exceptions")
 add_compile_options("-fmacro-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}/=")
-
-if(DEBUGGER EQUAL "LLDB")
-    add_compile_options("-glldb")
-elseif(DEBUGGER EQUAL "GDB")
-    add_compile_options("-ggdb")
-elseif(DEBUGGER EQUAL "OFF")
-elseif(DEFINED DEBUGGER)
-    message(WARNING "Unknown $DEBUGGER variable ${DEBUGGER} (use \"OFF\" for no debug symbols)")
-endif()
+add_compile_options("-g")
 
 set(CMAKE_CXX_FLAGS "-O2")
 set(CMAKE_CXX_FLAGS_DEBUG "-O0")
@@ -29,6 +21,9 @@ set(CMAKE_CXX_FLAGS_DEBUG "-O0")
 add_executable(app
   "sources/main.cxx"
   "sources/log.cxx"
+  "sources/object_base.cxx"
+  "sources/entity.cxx"
+  "sources/scene.cxx"
   "sources/geometry/base.cxx"
   "sources/geometry/box.cxx"
   "sources/material/base.cxx"
