@@ -4,6 +4,26 @@
 #include <fstream>
 #include <source_location>
 
+template <class T, class U, class F>
+    requires std::same_as<std::invoke_result_t<F, T>, U>
+U map_or(std::optional<T> optional_value, U default_value, F&& f) {
+    if (optional_value.has_value()) {
+        return f(optional_value.value());
+    } else {
+        return default_value;
+    }
+}
+
+template <class T, class U, class F>
+    requires std::same_as<std::invoke_result_t<F, T&>, U>
+U map_or(std::optional<T> optional_value, U default_value, F&& f) {
+    if (optional_value.has_value()) {
+        return f(optional_value.value());
+    } else {
+        return default_value;
+    }
+}
+
 template <class F>
 auto lock_mutex(std::mutex& mutex, F&& f) -> std::invoke_result_t<F> {
     std::lock_guard<std::mutex> lock(mutex);
@@ -33,7 +53,8 @@ static inline void todo(std::source_location source_location = std::source_locat
         source_location.file_name(),
         source_location.line(),
         source_location.column(),
-        source_location.function_name());
+        source_location.function_name()
+    );
     abort();
 }
 

@@ -17,7 +17,8 @@ class ColorMaterial : public MaterialBase {
     ColorMaterial(
         const wgpu::Device& device,
         const wgpu::Queue& queue,
-        glm::vec3 fill_color = glm::vec3(1, 1, 1));
+        glm::vec3 fill_color = glm::vec3(1, 1, 1)
+    );
 
     void set_color(const wgpu::Queue& queue, glm::vec3 value);
 

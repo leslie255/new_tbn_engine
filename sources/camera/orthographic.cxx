@@ -12,7 +12,8 @@ glm::mat4x4 OrthographicCamera::projection_matrix(float width, float height) con
             -0.5 * height, // bottom
             0.5 * height,  // top
             this->z_near,  // zNear
-            this->z_far);  // zFar
+            this->z_far
+        ); // zFar
     case CoordinateSystem::CenterDown:
         return glm::orthoRH_NO<float>(
             -0.5 * width,  // left
@@ -20,7 +21,8 @@ glm::mat4x4 OrthographicCamera::projection_matrix(float width, float height) con
             0.5 * height,  // bottom
             -0.5 * height, // top
             this->z_near,  // zNear
-            this->z_far);  // zFar
+            this->z_far
+        ); // zFar
     case CoordinateSystem::TopLeftDown:
         return glm::orthoRH_NO<float>(
             0.0,          // left
@@ -28,7 +30,8 @@ glm::mat4x4 OrthographicCamera::projection_matrix(float width, float height) con
             height,       // bottom
             0.0,          // top
             this->z_near, // zNear
-            this->z_far); // zFar
+            this->z_far
+        ); // zFar
     case CoordinateSystem::BottomLeftUp:
         return glm::orthoRH_NO<float>(
             0.0,          // left
@@ -36,7 +39,8 @@ glm::mat4x4 OrthographicCamera::projection_matrix(float width, float height) con
             0.0,          // bottom
             height,       // top
             this->z_near, // zNear
-            this->z_far); // zFar
+            this->z_far
+        ); // zFar
     }
 }
 

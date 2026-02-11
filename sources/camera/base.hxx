@@ -9,9 +9,3 @@ struct CameraBase {
 
     virtual ~CameraBase() = default;
 };
-
-template <class T>
-concept is_camera = requires(T* a) {
-    { ((const T*)a)->projection_matrix(std::declval<float>()) } -> std::same_as<glm::mat4x4>;
-    { ((const T*)a)->view_matrix() } -> std::same_as<glm::mat4x4>;
-};

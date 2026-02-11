@@ -55,13 +55,25 @@ void log_with_level(LogLevel log_level, fmt::format_string<T...> fmt, T&&... arg
         return;
 
     with_logging_backend_locked([&]() {
+        FILE* out;
+#if defined(__EMSCRIPTEN__)
+        out = stdout;
         switch (log_level) {
-        case LogLevel::Verbose: fmt::print(stderr, "[\e[0;34mVERBOSE\e[0m] "); break;
-        case LogLevel::Info: fmt::print(stderr, "[\e[0;32mINFO\e[0m] "); break;
-        case LogLevel::Warn: fmt::print(stderr, "[\e[0;33mWARN\e[0m] "); break;
-        case LogLevel::Error: fmt::print(stderr, "[\e[0;31mERROR\e[0m] "); break;
+        case LogLevel::Verbose: fmt::print(out, "[VERBOSE] "); break;
+        case LogLevel::Info: fmt::print(out, "[INFO] "); break;
+        case LogLevel::Warn: fmt::print(out, "[WARN] "); break;
+        case LogLevel::Error: fmt::print(out, "[ERROR] "); break;
         }
-        fmt::println(stderr, fmt, std::forward<T>(args)...);
+#else
+        out = stderr;
+        switch (log_level) {
+        case LogLevel::Verbose: fmt::print(out, "[\e[0;34mVERBOSE\e[0m] "); break;
+        case LogLevel::Info: fmt::print(out, "[\e[0;32mINFO\e[0m] "); break;
+        case LogLevel::Warn: fmt::print(out, "[\e[0;33mWARN\e[0m] "); break;
+        case LogLevel::Error: fmt::print(out, "[\e[0;31mERROR\e[0m] "); break;
+        }
+#endif
+        fmt::println(out, fmt, std::forward<T>(args)...);
     });
 }
 

@@ -34,7 +34,8 @@ void pop_log_level() {
         log_level_stack.pop_back();
         current_log_level.store(
             log_level_stack[log_level_stack.size() - 1],
-            std::memory_order_relaxed);
+            std::memory_order_relaxed
+        );
     });
 }
 

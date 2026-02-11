@@ -182,7 +182,7 @@ BoxGeometry::BoxGeometry(const wgpu::Device& device, const wgpu::Queue& queue) {
     queue.WriteBuffer(this->normal_transform, 0, &identity4x4, sizeof(identity4x4));
 }
 
-wgpu::VertexState BoxGeometry::create_vertex_state(const wgpu::Device& device) const {
+ShaderInfo BoxGeometry::create_vertex_shader(const wgpu::Device& device) const {
     auto wgsl = wgpu::ShaderSourceWGSL({
         .nextInChain = nullptr,
         .code = wgpu::StringView(SHADER_CODE),
@@ -192,9 +192,9 @@ wgpu::VertexState BoxGeometry::create_vertex_state(const wgpu::Device& device) c
         .label = "Box"sv,
     };
     auto shader_module = device.CreateShaderModule(&shader_module_descriptor);
-    return wgpu::VertexState {
-        .module = shader_module,
-        .entryPoint = wgpu::StringView("main"),
+    return ShaderInfo {
+        .shader_module = shader_module,
+        .constants = {},
     };
 }
 
@@ -241,7 +241,8 @@ wgpu::BindGroupLayout BoxGeometry::create_bind_group_layout(const wgpu::Device& 
 
 wgpu::BindGroup BoxGeometry::create_bind_group(
     const wgpu::Device& device,
-    wgpu::BindGroupLayout layout) const {
+    wgpu::BindGroupLayout layout
+) const {
     auto entries = std::array {
         wgpu::BindGroupEntry {
             .binding = 0,

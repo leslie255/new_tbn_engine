@@ -14,7 +14,7 @@ class BoxGeometry : public GeometryBase {
     BoxGeometry() = default;
     BoxGeometry(const wgpu::Device& device, const wgpu::Queue& queue);
 
-    wgpu::VertexState create_vertex_state(const wgpu::Device& device) const override;
+    ShaderInfo create_vertex_shader(const wgpu::Device& device) const override;
 
     wgpu::BindGroupLayout create_bind_group_layout(const wgpu::Device& device) const override;
 

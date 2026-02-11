@@ -1,7 +1,7 @@
 #pragma once
 
-#include "base.hxx"
 #include "../utils.hxx"
+#include "base.hxx"
 
 struct PerspectiveCamera : public CameraBase {
     glm::vec3 position = glm::vec3(0, 0, 0);

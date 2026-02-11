@@ -52,7 +52,8 @@ wgpu::BindGroupLayout UvDebugMaterial::create_bind_group_layout(const wgpu::Devi
 
 wgpu::BindGroup UvDebugMaterial::create_bind_group(
     const wgpu::Device& device,
-    wgpu::BindGroupLayout layout) const {
+    wgpu::BindGroupLayout layout
+) const {
     auto descriptor = wgpu::BindGroupDescriptor {
         .label = "UV Debug Material"sv,
         .layout = layout,

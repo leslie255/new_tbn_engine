@@ -5,7 +5,8 @@ using namespace std::literals;
 ColorMaterial::ColorMaterial(
     const wgpu::Device& device,
     const wgpu::Queue& queue,
-    glm::vec3 fill_color) {
+    glm::vec3 fill_color
+) {
     auto mat4x4_buffer_descriptor = wgpu::BufferDescriptor {
         .usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
         .size = sizeof(float[4][4]),
@@ -71,7 +72,7 @@ struct PhongParameters {
 @group(2) @binding(2) var<uniform> light_position: vec3<f32>;
 @group(2) @binding(3) var<uniform> phong: PhongParameters;
 
-@fragment fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
+@fragment fn main(input: VertexOut) -> @location(0) vec4<f32> {
     let normal = normalize(input.normal);
     let light_direction = normalize(light_position - input.position_world);
     let view_direction = normalize(view_position - input.position_world);
@@ -106,6 +107,7 @@ ShaderInfo ColorMaterial::create_fragment_shader(const wgpu::Device& device) con
     });
     auto shader_module_descriptor = wgpu::ShaderModuleDescriptor {
         .nextInChain = &shader_source,
+        .label = "ColorMaterial"sv,
     };
     auto shader_module = device.CreateShaderModule(&shader_module_descriptor);
 
@@ -168,7 +170,8 @@ wgpu::BindGroupLayout ColorMaterial::create_bind_group_layout(const wgpu::Device
 
 wgpu::BindGroup ColorMaterial::create_bind_group(
     const wgpu::Device& device,
-    wgpu::BindGroupLayout layout) const {
+    wgpu::BindGroupLayout layout
+) const {
     auto entries = std::array {
         wgpu::BindGroupEntry {
             .binding = 0,

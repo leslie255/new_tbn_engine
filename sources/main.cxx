@@ -99,7 +99,8 @@ struct ObjectPipeline {
         wgpu::TextureFormat surface_format,
         const CameraBindGroup& camera_bind_group,
         const GeometryBase& geometry,
-        const MaterialBase& material) {
+        const MaterialBase& material
+    ) {
         // Bind group layouts.
         auto camera_bind_group_layout = camera_bind_group.layout;
         auto geometry_bind_group_layout = geometry.create_bind_group_layout(device);
@@ -118,7 +119,13 @@ struct ObjectPipeline {
         auto pipeline_layout = device.CreatePipelineLayout(&pipeline_layout_descriptor);
 
         // Pipeline.
-        auto vertex_state = geometry.create_vertex_state(device);
+        auto vertex_shader = geometry.create_vertex_shader(device);
+        auto vertex_state = wgpu::VertexState {
+            .module = vertex_shader.shader_module,
+            .entryPoint = wgpu::StringView(vertex_shader.entry_point),
+            .constantCount = vertex_shader.constants.size(),
+            .constants = vertex_shader.constants.data(),
+        };
         auto color_target_state = wgpu::ColorTargetState {
             .format = surface_format,
             .blend = nullptr,
@@ -127,11 +134,12 @@ struct ObjectPipeline {
         auto depth_stencil_state = wgpu::DepthStencilState {
             .format = wgpu::TextureFormat::Depth16Unorm,
             .depthWriteEnabled = true,
-            .depthCompare = wgpu::CompareFunction::Less,
+            .depthCompare = wgpu::CompareFunction::LessEqual,
         };
         auto fragment_shader = material.create_fragment_shader(device);
         auto fragment_state = wgpu::FragmentState {
             .module = fragment_shader.shader_module,
+            .entryPoint = wgpu::StringView(fragment_shader.entry_point),
             .constantCount = fragment_shader.constants.size(),
             .constants = fragment_shader.constants.data(),
             .targetCount = 1,
@@ -140,6 +148,7 @@ struct ObjectPipeline {
         auto pipeline_descriptor = wgpu::RenderPipelineDescriptor {
             .layout = pipeline_layout,
             .vertex = vertex_state,
+            .primitive = geometry.primitive_state(),
             .depthStencil = &depth_stencil_state,
             .fragment = &fragment_state,
         };
@@ -149,9 +158,7 @@ struct ObjectPipeline {
         this->material_bind_group = material.create_bind_group(device, material_bind_group_layout);
     }
 
-    template <class Geometry>
-        requires is_geometry<Geometry>
-    void draw_commands(wgpu::RenderPassEncoder& render_pass, const Geometry& geometry) {
+    void draw_commands(wgpu::RenderPassEncoder& render_pass, const GeometryBase& geometry) {
         render_pass.SetPipeline(this->wgpu_pipeline);
         render_pass.SetBindGroup(1, this->geometry_bind_group);
         render_pass.SetBindGroup(2, this->material_bind_group);
@@ -164,7 +171,8 @@ struct ObjectPipeline {
                 parameters->vertex_count,
                 parameters->instance_count,
                 parameters->first_vertex,
-                parameters->first_instance);
+                parameters->first_instance
+            );
         } else if (const auto* parameters = std::get_if<DrawParametersIndexed>(&draw_parameters)) {
             assert(parameters->index_buffer != nullptr);
             render_pass.SetIndexBuffer(parameters->index_buffer, parameters->index_format);
@@ -176,7 +184,8 @@ struct ObjectPipeline {
                 parameters->instance_count,
                 parameters->first_index,
                 parameters->base_vertex,
-                parameters->first_instance);
+                parameters->first_instance
+            );
         }
     }
 };
@@ -242,15 +251,15 @@ struct Application {
         auto adapter_future = instance.RequestAdapter(
             nullptr,
             wgpu::CallbackMode::WaitAnyOnly,
-            [&](wgpu::RequestAdapterStatus status,
-                wgpu::Adapter adapter,
-                wgpu::StringView message) {
+            [&](wgpu::RequestAdapterStatus status, wgpu::Adapter adapter, wgpu::StringView message
+            ) {
                 if (status != wgpu::RequestAdapterStatus::Success) {
                     log_error("error requesting adapter: {}", fmt::streamed(message));
                     abort();
                 }
                 this->adapter = std::move(adapter);
-            });
+            }
+        );
         this->instance.WaitAny(adapter_future, UINT64_MAX);
 
         // Device.
@@ -260,9 +269,11 @@ struct Application {
                 log_error(
                     "webgpu (dawn) error type: {}, message: {}",
                     fmt::streamed(error_type),
-                    fmt::streamed(message));
+                    fmt::streamed(message)
+                );
                 __builtin_trap();
-            });
+            }
+        );
         device_descriptor.SetDeviceLostCallback(
             wgpu::CallbackMode::AllowSpontaneous,
             [](const wgpu::Device&, wgpu::DeviceLostReason reason, wgpu::StringView message) {
@@ -272,9 +283,11 @@ struct Application {
                     log_warn(
                         "webgpu (dawn) device lost, reason: {}, message: {}",
                         fmt::streamed(reason),
-                        fmt::streamed(message));
+                        fmt::streamed(message)
+                    );
                 }
-            });
+            }
+        );
         auto device_future = adapter.RequestDevice(
             &device_descriptor,
             wgpu::CallbackMode::WaitAnyOnly,
@@ -284,7 +297,8 @@ struct Application {
                     __builtin_trap();
                 }
                 this->device = std::move(device);
-            });
+            }
+        );
         instance.WaitAny(device_future, UINT64_MAX);
 
         // Queue.
@@ -303,7 +317,8 @@ struct Application {
             INIT_WINDOW_HEIGHT,
             "WebGPU Test",
             nullptr,
-            nullptr);
+            nullptr
+        );
         this->surface = wgpu::glfw::CreateSurfaceForWindow(instance, window);
         glfwSetWindowSizeCallback(this->window, Application::window_resize_callback);
 
@@ -373,7 +388,8 @@ struct Application {
         this->material = ColorMaterial(
             this->device,
             this->queue,
-            glm::convertSRGBToLinear(glm::vec3(0, 0.5, 0.5)));
+            glm::convertSRGBToLinear(glm::vec3(0, 0.5, 0.5))
+        );
         this->material.set_light_position(this->queue, glm::vec3(400, 400, -400));
 
         this->pipeline = ObjectPipeline(
@@ -381,7 +397,8 @@ struct Application {
             this->surface_format,
             this->camera_bind_group,
             *this->geometry,
-            this->material);
+            this->material
+        );
     }
 
     void draw_frame() {
@@ -399,7 +416,7 @@ struct Application {
 
         this->material.set_view_position(this->queue, this->camera.position);
 
-        auto period = 2.0;
+        auto period = 4.0;
         auto rotation = (float)fmod(unix_seconds() / period, glm::two_pi<double>());
         auto cube_size = glm::vec3(60, 60, 60);
         auto model = glm::identity<glm::mat4x4>();
