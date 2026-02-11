@@ -1,9 +1,8 @@
 #include <GLFW/glfw3.h>
 #include <dawn/webgpu_cpp_print.h>
 #include <fmt/ostream.h>
-#include <glm/ext/matrix_transform.hpp>
+#include <glm/ext.hpp>
 #include <glm/gtc/color_space.hpp>
-#include <span>
 #include <webgpu/webgpu_cpp.h>
 #include <webgpu/webgpu_glfw.h>
 
@@ -13,6 +12,7 @@
 #include "log.hxx"
 #include "material/color.hxx"
 #include "scene.hxx"
+#include "surface.hxx"
 
 using namespace std::literals;
 
@@ -95,10 +95,7 @@ struct Application {
     wgpu::Device device;
     wgpu::Queue queue;
 
-    wgpu::Surface surface;
-    wgpu::TextureFormat surface_color_format;
-    wgpu::Texture depth_texture;
-    wgpu::TextureFormat surface_depth_format;
+    WindowSurface window_surface;
 
     std::shared_ptr<PerspectiveCamera> camera;
 
@@ -113,8 +110,7 @@ struct Application {
 
     void run() {
         this->initialize_wgpu();
-        this->initialize_window();
-        this->initialize_surface();
+        this->initialize_window_and_surface();
         this->initialize_scene();
 
 #if defined(__EMSCRIPTEN__)
@@ -123,7 +119,7 @@ struct Application {
         while (!glfwWindowShouldClose(this->window)) {
             glfwPollEvents();
             this->draw_frame();
-            this->surface.Present();
+            this->window_surface.present();
             this->instance.ProcessEvents();
         }
 #endif
@@ -203,7 +199,7 @@ struct Application {
         this->queue = this->device.GetQueue();
     }
 
-    void initialize_window() {
+    void initialize_window_and_surface() {
         if (!glfwInit()) {
             log_error("GLFW initialization error");
             abort();
@@ -217,62 +213,19 @@ struct Application {
             nullptr,
             nullptr
         );
-        this->surface = wgpu::glfw::CreateSurfaceForWindow(instance, window);
+        this->window_surface = WindowSurface(
+            this->instance,
+            this->adapter,
+            this->device,
+            this->window,
+            WindowSurface::CreateInfo {
+                .create_depth_stencil_texture = true,
+                .depth_stencil_format = wgpu::TextureFormat::Depth16Unorm,
+            }
+        );
         glfwSetWindowSizeCallback(this->window, Application::window_resize_callback);
 
         glfwSetWindowUserPointer(this->window, this);
-    }
-
-    void initialize_surface() {
-        wgpu::SurfaceCapabilities capabilities;
-        this->surface.GetCapabilities(this->adapter, &capabilities);
-        auto supported_formats = std::span(capabilities.formats, capabilities.formatCount);
-        for (wgpu::TextureFormat format :
-             std::span(capabilities.formats, capabilities.formatCount)) {
-            log_verbose("detected supported surface format: {}", fmt::streamed(format));
-            if (format == wgpu::TextureFormat::RGBA8UnormSrgb ||
-                format == wgpu::TextureFormat::BGRA8UnormSrgb) {
-                this->surface_color_format = format;
-            }
-        }
-        if (this->surface_color_format == wgpu::TextureFormat::Undefined) {
-            if (supported_formats.size() == 0) {
-                log_warn("cannot find any supported surface format, using BGRA8UnormSrgb");
-                this->surface_color_format = wgpu::TextureFormat::BGRA8UnormSrgb;
-            } else {
-                log_warn("cannot find a suitable surface format, using the first available "
-                         "one instead");
-                this->surface_color_format = capabilities.formats[0];
-            }
-        }
-        log_info("chosen surface format {}", fmt::streamed(this->surface_color_format));
-        this->reconfigure_surface_for_resize(INIT_WINDOW_WIDTH, INIT_WINDOW_HEIGHT);
-    }
-
-    void reconfigure_surface_for_resize(uint32_t width, uint32_t height) {
-        auto surface_configuration = wgpu::SurfaceConfiguration {
-            .device = this->device,
-            .format = this->surface_color_format,
-            .width = width,
-            .height = height,
-        };
-        surface.Configure(&surface_configuration);
-
-        // Re-create depth texture.
-        this->surface_depth_format = wgpu::TextureFormat::Depth16Unorm;
-        auto depth_texture_descriptor = wgpu::TextureDescriptor {
-            .label = "Depth Texture"sv,
-            .usage = wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::TextureBinding,
-            .dimension = wgpu::TextureDimension::e2D,
-            .size =
-                wgpu::Extent3D {
-                    .width = width,
-                    .height = height,
-                    .depthOrArrayLayers = 1,
-                },
-            .format = this->surface_depth_format,
-        };
-        this->depth_texture = this->device.CreateTexture(&depth_texture_descriptor);
     }
 
     void initialize_scene() {
@@ -280,12 +233,7 @@ struct Application {
         this->camera->position = glm::vec3(0, 0, 100);
         this->camera->direction = glm::normalize(glm::vec3(0, 0., -1));
 
-        this->scene = Scene(
-            this->device,
-            this->queue,
-            this->surface_color_format,
-            this->surface_depth_format
-        );
+        this->scene = Scene(this->device, this->queue, this->window_surface.get_format());
         this->scene.set_camera(this->camera);
 
         // Geometry.
@@ -303,16 +251,11 @@ struct Application {
     }
 
     void draw_frame() {
-        wgpu::SurfaceTexture surface_texture;
-        surface.GetCurrentTexture(&surface_texture);
-        auto surface_texture_view = surface_texture.texture.CreateView();
-        uint32_t frame_width;
-        uint32_t frame_height;
-        glfwGetWindowSize(this->window, (int32_t*)&frame_width, (int32_t*)&frame_height);
+        auto surface = this->window_surface.get_current_surface();
 
         this->material->set_view_position(this->queue, this->camera->position);
 
-        auto period = 4.0;
+        double period = 4.0;
         auto rotation = (float)fmod(unix_seconds() / period, glm::two_pi<double>());
         auto cube_size = glm::vec3(60, 60, 60);
         auto model = glm::identity<glm::mat4x4>();
@@ -322,17 +265,12 @@ struct Application {
         model = glm::scale(model, cube_size);
         this->scene.get_entity(this->entity).set_model(model);
 
-        this->scene.draw(Scene::DrawInfo {
-            .color_texture = surface_texture_view,
-            .depth_stencil_texture = this->depth_texture.CreateView(),
-            .frame_width = frame_width,
-            .frame_height = frame_height,
-        });
+        this->scene.draw(surface);
     }
 
     static void window_resize_callback(GLFWwindow* window, int32_t width, int32_t height) {
         auto this_ = (Application*)glfwGetWindowUserPointer(window);
-        this_->reconfigure_surface_for_resize((uint32_t)width, (uint32_t)height);
+        this_->window_surface.reconfigure_for_size((uint32_t)width, (uint32_t)height);
     }
 };
 

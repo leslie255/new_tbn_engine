@@ -1,4 +1,5 @@
 #include "scene.hxx"
+#include "log.hxx"
 
 using namespace std::literals;
 
@@ -46,16 +47,11 @@ static inline wgpu::BindGroup create_camera_bind_group(
     return device.CreateBindGroup(&bind_group_descriptor);
 }
 
-Scene::Scene(
-    wgpu::Device device,
-    wgpu::Queue queue,
-    wgpu::TextureFormat surface_color_format,
-    wgpu::TextureFormat surface_depth_stencil_format
-)
+Scene::Scene(wgpu::Device device, wgpu::Queue queue, SurfaceFormat surface_format)
     : device(std::move(device))
     , queue(std::move(queue))
-    , surface_color_format(surface_color_format)
-    , surface_depth_stencil_format(surface_depth_stencil_format) {
+    , surface_color_format(surface_format.color_format)
+    , surface_depth_stencil_format(surface_format.depth_stencil_format) {
     // Projection uniform buffer.
     auto projection_uniform_buffer_descriptor = wgpu::BufferDescriptor {
         .usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
@@ -108,23 +104,32 @@ void Scene::delete_entity(EntityId id) {
     this->entities[id.index] = nullptr;
 }
 
-void Scene::draw(const DrawInfo& info) {
-    assert(info.color_texture != nullptr);
-    assert(info.depth_stencil_texture != nullptr);
-    assert(info.frame_width != 0);
-    assert(info.frame_height != 0);
+void Scene::draw(const Surface& surface) {
+    assert(surface.color_texture != nullptr);
+    assert(surface.depth_stencil_texture != nullptr);
+    assert(surface.color_format == this->surface_color_format);
+    assert(surface.depth_stencil_format == this->surface_depth_stencil_format);
+    if (surface.width == 0 || surface.height == 0) {
+        log_warn(
+            "Scene::draw called on surface with zero pixels (surface size: {}x{})",
+            surface.width,
+            surface.height
+        );
+        return;
+    }
 
-    auto clear_color = glm::convertSRGBToLinear(info.clear_color.value_or(glm::vec3(0, 0, 0)));
+    std::optional<glm::vec3> clear_color_ = glm::vec3(0, 0, 0);
+    auto clear_color = glm::convertSRGBToLinear(clear_color_.value_or(glm::vec3(0, 0, 0)));
 
     auto encoder = this->device.CreateCommandEncoder();
     auto color_attachment = wgpu::RenderPassColorAttachment {
-        .view = info.color_texture,
-        .loadOp = info.clear_color.has_value() ? wgpu::LoadOp::Clear : wgpu::LoadOp::Load,
+        .view = surface.color_texture_view,
+        .loadOp = clear_color_.has_value() ? wgpu::LoadOp::Clear : wgpu::LoadOp::Load,
         .storeOp = wgpu::StoreOp::Store,
         .clearValue = wgpu::Color {clear_color.r, clear_color.g, clear_color.b, 1.0},
     };
     auto depth_stencil_attachment = wgpu::RenderPassDepthStencilAttachment {
-        .view = info.depth_stencil_texture,
+        .view = surface.depth_stencil_texture_view,
         .depthLoadOp = wgpu::LoadOp::Clear,
         .depthStoreOp = wgpu::StoreOp::Store,
         .depthClearValue = 1.0,
@@ -142,7 +147,7 @@ void Scene::draw(const DrawInfo& info) {
     if (this->camera != nullptr) {
         view_matrix = this->camera->view_matrix();
         projection_matrix =
-            this->camera->projection_matrix((float)info.frame_width, (float)info.frame_height);
+            this->camera->projection_matrix((float)surface.width, (float)surface.height);
     } else {
         view_matrix = glm::identity<glm::mat4x4>();
         projection_matrix = glm::identity<glm::mat4x4>();

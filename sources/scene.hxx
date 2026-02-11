@@ -4,6 +4,7 @@
 
 #include "camera/base.hxx"
 #include "entity.hxx"
+#include "surface.hxx"
 
 struct EntityId {
     size_t index;
@@ -30,12 +31,7 @@ class Scene {
   public:
     Scene() = default;
 
-    Scene(
-        wgpu::Device device,
-        wgpu::Queue queue,
-        wgpu::TextureFormat surface_color_format,
-        wgpu::TextureFormat surface_depth_stencil_format
-    );
+    Scene(wgpu::Device device, wgpu::Queue queue, SurfaceFormat surface_format);
 
     void set_camera(std::shared_ptr<CameraBase> camera);
 
@@ -46,21 +42,6 @@ class Scene {
     Entity& get_entity(EntityId id);
     void delete_entity(EntityId id);
 
-    struct DrawInfo {
-        /// Must be non-null and match this scene's `surface_color_format`.
-        wgpu::TextureView color_texture;
-
-        /// Must be non-null and match this scene's `surface_depth_stencil_format`.
-        wgpu::TextureView depth_stencil_texture;
-
-        /// Must be non-zero.
-        uint32_t frame_width;
-
-        /// Must be non-zero.
-        uint32_t frame_height;
-
-        std::optional<glm::vec3> clear_color = std::nullopt;
-    };
-
-    void draw(const DrawInfo& options);
+    /// Must be a surface of the same texture format that the scene is created for.
+    void draw(const Surface& surface);
 };
