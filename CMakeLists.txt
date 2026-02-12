@@ -24,7 +24,7 @@ add_executable(app
   "sources/object_base.cxx"
   "sources/entity.cxx"
   "sources/scene.cxx"
-  "sources/surface.cxx"
+  "sources/canvas.cxx"
   "sources/swapchain.cxx"
   "sources/geometry/base.cxx"
   "sources/geometry/box.cxx"

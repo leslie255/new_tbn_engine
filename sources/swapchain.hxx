@@ -3,7 +3,7 @@
 #include <GLFW/glfw3.h>
 #include <webgpu/webgpu_cpp.h>
 
-#include "surface.hxx"
+#include "canvas.hxx"
 
 class Swapchain {
     wgpu::Device device = nullptr;
@@ -11,7 +11,7 @@ class Swapchain {
     uint32_t width = 0;
     uint32_t height = 0;
 
-    SurfaceFormat format = {
+    CanvasFormat format = {
         .color_format = wgpu::TextureFormat::Undefined,
         .depth_stencil_format = wgpu::TextureFormat::Undefined,
     };
@@ -25,7 +25,16 @@ class Swapchain {
 
     struct CreateInfo {
         bool create_depth_stencil_texture;
+
         wgpu::TextureFormat depth_stencil_format;
+
+        /// Whether to prefer SRGB output textures.
+        /// If surface does not support SRGB output, linear output would be used instead.
+        bool prefer_srgb = true;
+
+        /// Whether to prefer float over unorm for output color textures.
+        /// Only applicable if `prefer_srgb == `false`, or if surface does not support SRGB output.
+        bool prefer_float = false;
     };
 
     Swapchain() = default;
@@ -41,12 +50,11 @@ class Swapchain {
 
     uint32_t get_height() const;
 
-    SurfaceFormat get_format() const;
+    CanvasFormat get_format() const;
 
-    Surface get_current_surface();
+    Canvas get_current_surface();
 
     void reconfigure_for_size(uint32_t width, uint32_t height);
 
     void present();
 };
-

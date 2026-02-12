@@ -1,11 +1,11 @@
 #include <fmt/base.h>
 #include <webgpu/webgpu_glfw.h>
 
-#include "surface.hxx"
+#include "canvas.hxx"
 
 using namespace std::literals;
 
-Surface::Surface(const wgpu::Device& device, const CreateInfo& info) {
+Canvas::Canvas(const wgpu::Device& device, const CreateInfo& info) {
     auto color_texture_descriptor = wgpu::TextureDescriptor {
         .label = "Color Texture of a Surface"sv,
         .usage = wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::TextureBinding,
@@ -42,15 +42,15 @@ Surface::Surface(const wgpu::Device& device, const CreateInfo& info) {
     }
 }
 
-bool Surface::has_depth_stencil() const {
+bool Canvas::has_depth_stencil() const {
     return this->format.depth_stencil_format == wgpu::TextureFormat::Undefined;
 }
 
-bool Surface::is_window_surface() const {
+bool Canvas::is_window_surface() const {
     return std::holds_alternative<wgpu::SurfaceTexture>(this->color_texture);
 }
 
-wgpu::Texture Surface::get_color_texture() const {
+wgpu::Texture Canvas::get_color_texture() const {
     if (const auto* surface_texture = std::get_if<wgpu::SurfaceTexture>(&this->color_texture)) {
         return surface_texture->texture;
     } else if (const auto* texture = std::get_if<wgpu::Texture>(&this->color_texture)) {

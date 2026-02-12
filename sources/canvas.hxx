@@ -2,14 +2,16 @@
 
 #include <webgpu/webgpu_cpp.h>
 
-struct SurfaceFormat {
+struct CanvasFormat {
     wgpu::TextureFormat color_format = wgpu::TextureFormat::Undefined;
     wgpu::TextureFormat depth_stencil_format = wgpu::TextureFormat::Undefined;
 };
 
-struct Surface {
-    SurfaceFormat format = {
+/// A canvas which the GPU can draw on.
+struct Canvas {
+    CanvasFormat format = {
         .color_format = wgpu::TextureFormat::Undefined,
+        /// Should be kept undefined if there is no depth-stencil texture.
         .depth_stencil_format = wgpu::TextureFormat::Undefined,
     };
 
@@ -30,8 +32,8 @@ struct Surface {
         wgpu::TextureFormat depth_stencil_format;
     };
 
-    Surface() = default;
-    Surface(const wgpu::Device& device, const CreateInfo& info);
+    Canvas() = default;
+    Canvas(const wgpu::Device& device, const CreateInfo& info);
 
     bool has_depth_stencil() const;
 

@@ -15,3 +15,4 @@ SpaceBeforeCpp11BracedList: true
 PointerAlignment: Left
 BreakConstructorInitializers: BeforeComma
 AllowShortCaseLabelsOnASingleLine: true
+BreakStringLiterals: false

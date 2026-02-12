@@ -4,7 +4,7 @@
 
 #include "camera/base.hxx"
 #include "entity.hxx"
-#include "surface.hxx"
+#include "canvas.hxx"
 
 struct EntityId {
     size_t index;
@@ -31,7 +31,7 @@ class Scene {
   public:
     Scene() = default;
 
-    Scene(wgpu::Device device, wgpu::Queue queue, SurfaceFormat surface_format);
+    Scene(wgpu::Device device, wgpu::Queue queue, CanvasFormat surface_format);
 
     void set_camera(std::shared_ptr<CameraBase> camera);
 
@@ -43,5 +43,5 @@ class Scene {
     void delete_entity(EntityId id);
 
     /// Must be a surface of the same texture format that the scene is created for.
-    void draw(const Surface& surface);
+    void draw(const Canvas& surface);
 };

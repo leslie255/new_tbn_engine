@@ -47,7 +47,7 @@ static inline wgpu::BindGroup create_camera_bind_group(
     return device.CreateBindGroup(&bind_group_descriptor);
 }
 
-Scene::Scene(wgpu::Device device, wgpu::Queue queue, SurfaceFormat surface_format)
+Scene::Scene(wgpu::Device device, wgpu::Queue queue, CanvasFormat surface_format)
     : device(std::move(device))
     , queue(std::move(queue))
     , surface_color_format(surface_format.color_format)
@@ -104,7 +104,7 @@ void Scene::delete_entity(EntityId id) {
     this->entities[id.index] = nullptr;
 }
 
-void Scene::draw(const Surface& surface) {
+void Scene::draw(const Canvas& surface) {
     assert(surface.color_texture != nullptr);
     assert(surface.depth_stencil_texture != nullptr);
     assert(surface.color_format == this->surface_color_format);
