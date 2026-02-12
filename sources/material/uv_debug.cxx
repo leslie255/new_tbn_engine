@@ -11,7 +11,7 @@ struct VertexOut {
     @location(2) normal: vec3<f32>,
 };
 
-@fragment fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
+@fragment fn main(input: VertexOut) -> @location(0) vec4<f32> {
     let uv_deriv = fwidth(input.uv);
     let uv_width_x = uv_deriv.x * 4.0;
     let uv_width_y = uv_deriv.y * 4.0;

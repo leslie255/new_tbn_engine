@@ -95,12 +95,7 @@ struct PhongParameters {
     let specular_term = specular_strength * specular_factor * light_color;
 
     let color = ambient_term + diffuse_term + specular_term;
-    return vec4<f32>(
-        pow(color.r, 1.0 / 2.2),
-        pow(color.g, 1.0 / 2.2),
-        pow(color.b, 1.0 / 2.2),
-        1.0,
-    );
+    return vec4<f32>(color, 1.0);
 }
 
 )";

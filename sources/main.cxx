@@ -11,20 +11,17 @@
 #include "geometry/box.hxx"
 #include "log.hxx"
 #include "material/color.hxx"
+#include "material/uv_debug.hxx"
 #include "scene.hxx"
-#include "surface.hxx"
+#include "swapchain.hxx"
 
 using namespace std::literals;
 
 #if defined(__EMSCRIPTEN__)
 #include <emscripten/emscripten.h>
 #include <emscripten/html5.h>
-EM_JS(int32_t, web_init_width, (), {
-    return initWidth;
-});
-EM_JS(int32_t, web_init_height, (), {
-    return initHeight;
-});
+EM_JS(int32_t, web_init_width, (), { return initWidth; });
+EM_JS(int32_t, web_init_height, (), { return initHeight; });
 #endif
 
 static inline double unix_seconds() {
@@ -103,7 +100,7 @@ struct Application {
     wgpu::Device device;
     wgpu::Queue queue;
 
-    WindowSurface window_surface;
+    Swapchain swapchain;
 
     std::shared_ptr<PerspectiveCamera> camera;
 
@@ -125,7 +122,7 @@ struct Application {
         while (!glfwWindowShouldClose(this->window)) {
             glfwPollEvents();
             this->draw_frame();
-            this->window_surface.present();
+            this->swapchain.present();
             this->instance.ProcessEvents();
         }
 #endif
@@ -219,20 +216,15 @@ struct Application {
         auto init_width = 720;
         auto init_height = 480;
 #endif
-        this->window = glfwCreateWindow(
-            init_width,
-            init_height,
-            "WebGPU Test",
-            nullptr,
-            nullptr
-        );
+        this->window =
+            glfwCreateWindow(init_width, init_height, "TBN Engine Demo", nullptr, nullptr);
 
-        this->window_surface = WindowSurface(
+        this->swapchain = Swapchain(
             this->instance,
             this->adapter,
             this->device,
             this->window,
-            WindowSurface::CreateInfo {
+            Swapchain::CreateInfo {
                 .create_depth_stencil_texture = true,
                 .depth_stencil_format = wgpu::TextureFormat::Depth16Unorm,
             }
@@ -248,7 +240,7 @@ struct Application {
         this->camera->position = glm::vec3(0, 0, 100);
         this->camera->direction = glm::normalize(glm::vec3(0, 0., -1));
 
-        this->scene = Scene(this->device, this->queue, this->window_surface.get_format());
+        this->scene = Scene(this->device, this->queue, this->swapchain.get_format());
         this->scene.set_camera(this->camera);
 
         auto light_position = glm::vec3(400, 400, -400);
@@ -259,9 +251,7 @@ struct Application {
         this->cube0 = this->scene.create_entity(geometry0, material0);
 
         auto geometry1 = std::make_shared<BoxGeometry>(this->device, this->queue);
-        auto material1 =
-            std::make_shared<ColorMaterial>(this->device, this->queue, srgb(0.7, 0.4, 0.6));
-        material1->update_light_position(this->queue, light_position);
+        auto material1 = std::make_shared<UvDebugMaterial>();
         this->cube1 = this->scene.create_entity(geometry1, material1);
     }
 
@@ -302,7 +292,7 @@ struct Application {
             this->scene.get_entity(this->cube1).set_model(model);
         }
 
-        auto surface = this->window_surface.get_current_surface();
+        auto surface = this->swapchain.get_current_surface();
         this->scene.draw(surface);
     }
 
@@ -311,7 +301,7 @@ struct Application {
     static void framebuffer_resize_callback(GLFWwindow* window, int32_t width, int32_t height) {
         auto this_ = (Application*)glfwGetWindowUserPointer(window);
         log_verbose("resizing surface to {}x{}", width, height);
-        this_->window_surface.reconfigure_for_size((uint32_t)width, (uint32_t)height);
+        this_->swapchain.reconfigure_for_size((uint32_t)width, (uint32_t)height);
     }
 };
 

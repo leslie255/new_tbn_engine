@@ -1,7 +1,5 @@
 #pragma once
 
-#include <GLFW/glfw3.h>
-#include <webgpu/webgpu.h>
 #include <webgpu/webgpu_cpp.h>
 
 struct SurfaceFormat {
@@ -40,46 +38,4 @@ struct Surface {
     bool is_window_surface() const;
 
     wgpu::Texture get_color_texture() const;
-};
-
-class WindowSurface {
-    wgpu::Device device = nullptr;
-
-    uint32_t width = 0;
-    uint32_t height = 0;
-
-    SurfaceFormat format = {
-        .color_format = wgpu::TextureFormat::Undefined,
-        .depth_stencil_format = wgpu::TextureFormat::Undefined,
-    };
-
-    wgpu::Surface surface = nullptr;
-    wgpu::Texture depth_stencil_texture = nullptr;
-
-  public:
-    struct CreateInfo {
-        bool create_depth_stencil_texture;
-        wgpu::TextureFormat depth_stencil_format;
-    };
-
-    WindowSurface() = default;
-    WindowSurface(
-        const wgpu::Instance& instance,
-        const wgpu::Adapter& adapter,
-        wgpu::Device device,
-        GLFWwindow* window,
-        const CreateInfo& info
-    );
-
-    uint32_t get_width() const;
-
-    uint32_t get_height() const;
-
-    SurfaceFormat get_format() const;
-
-    Surface get_current_surface();
-
-    void reconfigure_for_size(uint32_t width, uint32_t height);
-
-    void present();
 };
