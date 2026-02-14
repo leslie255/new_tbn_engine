@@ -107,7 +107,13 @@ class Postprocessor {
   public:
     Postprocessor() = default;
 
-    Postprocessor(wgpu::Device device, wgpu::Queue queue, uint32_t width, uint32_t height)
+    Postprocessor(
+        wgpu::Device device,
+        wgpu::Queue queue,
+        uint32_t width,
+        uint32_t height,
+        bool srgb_output
+    )
         : device(std::move(device))
         , queue(std::move(queue)) {
         this->input_canvas = Canvas(
@@ -154,8 +160,9 @@ class Postprocessor {
         };
         this->uniform_srgb_output = this->device.CreateBuffer(&uniform_srgb_output_descriptor);
 
-        auto srgb_output = (uint32_t)false;
-        this->queue.WriteBuffer(this->uniform_screen_extend, 0, &srgb_output, sizeof(srgb_output));
+        auto srgb_output_ = (uint32_t)srgb_output;
+        this->queue
+            .WriteBuffer(this->uniform_screen_extend, 0, &srgb_output_, sizeof(srgb_output_));
 
         auto input_texture_formats = std::array {
             this->input_canvas.format.color_format,
@@ -558,8 +565,7 @@ struct Application {
             this->device,
             this->window,
             Swapchain::CreateInfo {
-                .create_depth_stencil_texture = true,
-                .depth_stencil_format = wgpu::TextureFormat::Depth16Unorm,
+                .create_depth_stencil_texture = false,
                 .prefer_srgb = false,
                 .prefer_float = false,
             }
@@ -597,7 +603,8 @@ struct Application {
             this->device,
             this->queue,
             this->swapchain.get_width(),
-            this->swapchain.get_height()
+            this->swapchain.get_height(),
+            format_is_srgb(this->swapchain.get_format().color_format)
         );
     }
 
@@ -611,7 +618,8 @@ struct Application {
                 this->device,
                 this->queue,
                 this->swapchain.get_width(),
-                this->swapchain.get_height()
+                this->swapchain.get_height(),
+                format_is_srgb(this->swapchain.get_format().color_format)
             );
         }
 

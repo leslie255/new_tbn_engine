@@ -5,52 +5,10 @@
 
 #include "log.hxx"
 #include "swapchain.hxx"
+#include "utils.hxx"
 
 using namespace std::literals;
 
-static inline bool is_srgb(wgpu::TextureFormat format) {
-    switch (format) {
-    case wgpu::TextureFormat::RGBA8UnormSrgb:
-    case wgpu::TextureFormat::BGRA8UnormSrgb:
-    case wgpu::TextureFormat::BC1RGBAUnormSrgb:
-    case wgpu::TextureFormat::BC2RGBAUnormSrgb:
-    case wgpu::TextureFormat::BC3RGBAUnormSrgb:
-    case wgpu::TextureFormat::BC7RGBAUnormSrgb:
-    case wgpu::TextureFormat::ETC2RGB8UnormSrgb:
-    case wgpu::TextureFormat::ETC2RGB8A1UnormSrgb:
-    case wgpu::TextureFormat::ETC2RGBA8UnormSrgb:
-    case wgpu::TextureFormat::ASTC4x4UnormSrgb:
-    case wgpu::TextureFormat::ASTC5x4UnormSrgb:
-    case wgpu::TextureFormat::ASTC5x5UnormSrgb:
-    case wgpu::TextureFormat::ASTC6x5UnormSrgb:
-    case wgpu::TextureFormat::ASTC6x6UnormSrgb:
-    case wgpu::TextureFormat::ASTC8x5UnormSrgb:
-    case wgpu::TextureFormat::ASTC8x6UnormSrgb:
-    case wgpu::TextureFormat::ASTC8x8UnormSrgb:
-    case wgpu::TextureFormat::ASTC10x5UnormSrgb:
-    case wgpu::TextureFormat::ASTC10x6UnormSrgb:
-    case wgpu::TextureFormat::ASTC10x8UnormSrgb:
-    case wgpu::TextureFormat::ASTC10x10UnormSrgb:
-    case wgpu::TextureFormat::ASTC12x10UnormSrgb:
-    case wgpu::TextureFormat::ASTC12x12UnormSrgb: return true;
-    default: return false;
-    }
-}
-
-static inline bool is_float(wgpu::TextureFormat format) {
-    switch (format) {
-    case wgpu::TextureFormat::R16Float:
-    case wgpu::TextureFormat::R32Float:
-    case wgpu::TextureFormat::RG16Float:
-    case wgpu::TextureFormat::RG32Float:
-    case wgpu::TextureFormat::RGBA16Float:
-    case wgpu::TextureFormat::RGBA32Float:
-    case wgpu::TextureFormat::Depth32Float:
-    case wgpu::TextureFormat::Depth32FloatStencil8:
-    case wgpu::TextureFormat::BC6HRGBFloat: return true;
-    default: return false;
-    }
-}
 static inline wgpu::Texture create_depth_stencil_texture(
     const wgpu::Device& device,
     uint32_t width,
@@ -88,15 +46,15 @@ static inline wgpu::TextureFormat find_suitable_format(
         log_verbose("supported surface formats: {}", s);
     }
     for (auto format : supported_formats) {
-        if (info.prefer_srgb && is_srgb(format)) {
+        if (info.prefer_srgb && format_is_srgb(format)) {
             result = format;
             break;
         }
-        if (!info.prefer_srgb && info.prefer_float && is_float(format)) {
+        if (!info.prefer_srgb && info.prefer_float && format_is_float(format)) {
             result = format;
             break;
         }
-        if (!info.prefer_srgb && !info.prefer_float && !is_float(format)) {
+        if (!info.prefer_srgb && !info.prefer_float && !format_is_float(format)) {
             result = format;
             break;
         }
@@ -117,12 +75,12 @@ static inline wgpu::TextureFormat find_suitable_format(
                 fmt::streamed(result)
             );
         }
-    } else if (info.prefer_srgb && !is_srgb(result)) {
+    } else if (info.prefer_srgb && !format_is_srgb(result)) {
         log_info(
             "swapchain creation: requested SRGB texture but window does not support SRGB output, using {} instead",
             fmt::streamed(result)
         );
-    } else if (info.prefer_float && !is_float(result)) {
+    } else if (info.prefer_float && !format_is_float(result)) {
         log_info(
             "swapchain creation: requested float texture but window does not support SRGB output, using {} instead",
             fmt::streamed(result)
@@ -209,7 +167,7 @@ Canvas Swapchain::get_current_canvas() {
     surface.color_texture_view = color_texture_view;
 
     surface.depth_stencil_texture = this->depth_stencil_texture;
-    surface.depth_stencil_texture_view = this->depth_stencil_texture.CreateView();
+    surface.depth_stencil_texture_view = depth_stencil_texture_view;
 
     return surface;
 }

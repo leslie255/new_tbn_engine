@@ -24,9 +24,9 @@ class Swapchain {
     bool defer_resize = false;
 
     struct CreateInfo {
-        bool create_depth_stencil_texture;
+        bool create_depth_stencil_texture = false;
 
-        wgpu::TextureFormat depth_stencil_format;
+        wgpu::TextureFormat depth_stencil_format = wgpu::TextureFormat::Undefined;
 
         /// Whether to prefer SRGB output textures.
         /// If surface does not support SRGB output, linear output would be used instead.

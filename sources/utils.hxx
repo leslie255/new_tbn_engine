@@ -1,8 +1,10 @@
 #pragma once
 
-#include "log.hxx"
+#include <webgpu/webgpu_cpp.h>
 #include <fstream>
 #include <source_location>
+
+#include "log.hxx"
 
 template <class T, class U, class F>
     requires std::same_as<std::invoke_result_t<F, T>, U>
@@ -63,4 +65,48 @@ template <class T>
     requires std::is_floating_point_v<T>
 constexpr T degrees_to_radians(T x) {
     return x * 0.01745329252;
+}
+
+static inline bool format_is_srgb(wgpu::TextureFormat format) {
+    switch (format) {
+    case wgpu::TextureFormat::RGBA8UnormSrgb:
+    case wgpu::TextureFormat::BGRA8UnormSrgb:
+    case wgpu::TextureFormat::BC1RGBAUnormSrgb:
+    case wgpu::TextureFormat::BC2RGBAUnormSrgb:
+    case wgpu::TextureFormat::BC3RGBAUnormSrgb:
+    case wgpu::TextureFormat::BC7RGBAUnormSrgb:
+    case wgpu::TextureFormat::ETC2RGB8UnormSrgb:
+    case wgpu::TextureFormat::ETC2RGB8A1UnormSrgb:
+    case wgpu::TextureFormat::ETC2RGBA8UnormSrgb:
+    case wgpu::TextureFormat::ASTC4x4UnormSrgb:
+    case wgpu::TextureFormat::ASTC5x4UnormSrgb:
+    case wgpu::TextureFormat::ASTC5x5UnormSrgb:
+    case wgpu::TextureFormat::ASTC6x5UnormSrgb:
+    case wgpu::TextureFormat::ASTC6x6UnormSrgb:
+    case wgpu::TextureFormat::ASTC8x5UnormSrgb:
+    case wgpu::TextureFormat::ASTC8x6UnormSrgb:
+    case wgpu::TextureFormat::ASTC8x8UnormSrgb:
+    case wgpu::TextureFormat::ASTC10x5UnormSrgb:
+    case wgpu::TextureFormat::ASTC10x6UnormSrgb:
+    case wgpu::TextureFormat::ASTC10x8UnormSrgb:
+    case wgpu::TextureFormat::ASTC10x10UnormSrgb:
+    case wgpu::TextureFormat::ASTC12x10UnormSrgb:
+    case wgpu::TextureFormat::ASTC12x12UnormSrgb: return true;
+    default: return false;
+    }
+}
+
+static inline bool format_is_float(wgpu::TextureFormat format) {
+    switch (format) {
+    case wgpu::TextureFormat::R16Float:
+    case wgpu::TextureFormat::R32Float:
+    case wgpu::TextureFormat::RG16Float:
+    case wgpu::TextureFormat::RG32Float:
+    case wgpu::TextureFormat::RGBA16Float:
+    case wgpu::TextureFormat::RGBA32Float:
+    case wgpu::TextureFormat::Depth32Float:
+    case wgpu::TextureFormat::Depth32FloatStencil8:
+    case wgpu::TextureFormat::BC6HRGBFloat: return true;
+    default: return false;
+    }
 }
