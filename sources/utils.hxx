@@ -46,8 +46,9 @@ static inline std::string read_file(std::string_view path) {
     return out;
 }
 
+template <class T = void>
 [[noreturn]]
-static inline void todo(std::source_location source_location = std::source_location::current()) {
+static inline T todo(std::source_location source_location = std::source_location::current()) {
     log_error(
         "UNIMPLEMENTED @ {}:{}:{}, in function {}",
         source_location.file_name(),

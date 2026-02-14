@@ -26,15 +26,16 @@ add_executable(app
   "sources/scene.cxx"
   "sources/canvas.cxx"
   "sources/swapchain.cxx"
+  "sources/texture_blitter.cxx"
+  "sources/camera/base.cxx"
+  "sources/camera/perspective.cxx"
+  "sources/camera/orthographic.cxx"
   "sources/geometry/base.cxx"
   "sources/geometry/box.cxx"
   "sources/material/base.cxx"
   "sources/material/uv_debug.cxx"
   "sources/material/color.cxx"
-  "sources/camera/base.cxx"
-  "sources/camera/perspective.cxx"
-  "sources/camera/orthographic.cxx"
-  )
+)
 
 # === Project Compiler Flags === #
 

@@ -28,8 +28,9 @@ struct Canvas {
         uint32_t width;
         uint32_t height;
         wgpu::TextureFormat color_format;
-        bool create_depth_stencil_texture;
-        wgpu::TextureFormat depth_stencil_format;
+        bool create_depth_stencil_texture = false;
+        wgpu::TextureFormat depth_stencil_format = wgpu::TextureFormat::Undefined;
+        wgpu::TextureUsage texture_usages = wgpu::TextureUsage::RenderAttachment;
     };
 
     Canvas() = default;

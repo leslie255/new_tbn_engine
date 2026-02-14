@@ -1,7 +1,7 @@
-#include <span>
-#include <webgpu/webgpu_glfw.h>
 #include <dawn/webgpu_cpp_print.h>
 #include <fmt/ostream.h>
+#include <span>
+#include <webgpu/webgpu_glfw.h>
 
 #include "log.hxx"
 #include "swapchain.hxx"
@@ -76,13 +76,27 @@ static inline wgpu::TextureFormat find_suitable_format(
     const Swapchain::CreateInfo& info,
     std::span<wgpu::TextureFormat const> supported_formats
 ) {
-    wgpu::TextureFormat result = wgpu::TextureFormat::Undefined;
-    for (wgpu::TextureFormat format : supported_formats) {
+    auto result = wgpu::TextureFormat::Undefined;
+    if (get_current_log_level() <= LogLevel::Verbose) {
+        auto s = std::string("");
+        for (size_t i = 0; i < supported_formats.size(); ++i) {
+            fmt::format_to(std::back_inserter(s), "{}", fmt::streamed(supported_formats[i]));
+            if (i + 1 < supported_formats.size()) {
+                s.append(", ");
+            }
+        }
+        log_verbose("supported surface formats: {}", s);
+    }
+    for (auto format : supported_formats) {
         if (info.prefer_srgb && is_srgb(format)) {
             result = format;
             break;
         }
-        if (info.prefer_float && is_float(format)) {
+        if (!info.prefer_srgb && info.prefer_float && is_float(format)) {
+            result = format;
+            break;
+        }
+        if (!info.prefer_srgb && !info.prefer_float && !is_float(format)) {
             result = format;
             break;
         }
@@ -91,17 +105,17 @@ static inline wgpu::TextureFormat find_suitable_format(
     /// Safe guard against if no texture is found at all.
     if (result == wgpu::TextureFormat::Undefined) {
         if (supported_formats.size() == 0) {
-            result = wgpu::TextureFormat::BGRA8UnormSrgb;
-            log_error(
+            result = wgpu::TextureFormat::BGRA8Unorm;
+            log_warn(
                 "swapchain creation: window does not report supporting any texture format at all, trying format {} as a last resort",
                 fmt::streamed(result)
             );
         } else {
-            log_error(
+            result = supported_formats[0];
+            log_warn(
                 "swapchain creation: no suitable texture format is found, using the first availible one instead: {}",
                 fmt::streamed(result)
             );
-            result = supported_formats[0];
         }
     } else if (info.prefer_srgb && !is_srgb(result)) {
         log_info(
@@ -138,6 +152,7 @@ Swapchain::Swapchain(
 
     wgpu::SurfaceCapabilities capabilities;
     this->surface.GetCapabilities(adapter, &capabilities);
+    log_verbose("surface texture usages: {}", fmt::streamed(capabilities.usages));
     this->format.color_format = find_suitable_format(
         info,
         std::span(capabilities.formats, (size_t)capabilities.formatCount)
@@ -176,7 +191,7 @@ CanvasFormat Swapchain::get_format() const {
     return this->format;
 }
 
-Canvas Swapchain::get_current_surface() {
+Canvas Swapchain::get_current_canvas() {
     wgpu::SurfaceTexture surface_texture;
     surface.GetCurrentTexture(&surface_texture);
     auto color_texture_view = surface_texture.texture.CreateView();

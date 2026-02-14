@@ -6,9 +6,11 @@
 using namespace std::literals;
 
 Canvas::Canvas(const wgpu::Device& device, const CreateInfo& info) {
+    this->width = info.width;
+    this->height = info.height;
     auto color_texture_descriptor = wgpu::TextureDescriptor {
         .label = "Color Texture of a Surface"sv,
-        .usage = wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::TextureBinding,
+        .usage = info.texture_usages,
         .dimension = wgpu::TextureDimension::e2D,
         .size =
             wgpu::Extent3D {
@@ -26,7 +28,7 @@ Canvas::Canvas(const wgpu::Device& device, const CreateInfo& info) {
     if (info.create_depth_stencil_texture) {
         auto depth_stencil_texture_descriptor = wgpu::TextureDescriptor {
             .label = "Depth-Stencil Texture of a Surface"sv,
-            .usage = wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::TextureBinding,
+            .usage = info.texture_usages,
             .dimension = wgpu::TextureDimension::e2D,
             .size =
                 wgpu::Extent3D {

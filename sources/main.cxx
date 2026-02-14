@@ -3,6 +3,7 @@
 #include <fmt/ostream.h>
 #include <glm/ext.hpp>
 #include <glm/gtc/color_space.hpp>
+#include <span>
 #include <webgpu/webgpu_cpp.h>
 #include <webgpu/webgpu_glfw.h>
 
@@ -14,6 +15,7 @@
 #include "material/uv_debug.hxx"
 #include "scene.hxx"
 #include "swapchain.hxx"
+#include "texture_blitter.hxx"
 
 using namespace std::literals;
 
@@ -33,64 +35,387 @@ static inline glm::vec3 srgb(float r, float g, float b) {
     return glm::convertSRGBToLinear(glm::vec3(r, g, b));
 }
 
-struct CameraBindGroup {
-    wgpu::BindGroup wgpu_bind_group;
-    wgpu::BindGroupLayout layout;
-    wgpu::Buffer projection;
+template <class T>
+    requires std::is_integral_v<T> && std::is_unsigned_v<T>
+static inline T div_ceil(T x, T y) {
+    return (x + y - 1) / y;
+}
 
-    CameraBindGroup() = default;
+const std::string_view POSTPROCESS_SHADER_CODE = R"(
 
-    CameraBindGroup(const wgpu::Device& device, const wgpu::Queue& queue) {
-        // Projection uniform buffer.
-        auto buffer_descriptor = wgpu::BufferDescriptor {
+@group(0) @binding(0) var input_texture_color: texture_2d<f32>;
+@group(0) @binding(1) var input_texture_depth: texture_depth_2d;
+
+@group(1) @binding(0) var output_texture: texture_storage_2d<rgba8unorm, write>;
+
+@group(2) @binding(0) var<uniform> screen_extend: vec2<u32>;
+@group(2) @binding(1) var<uniform> srgb_output: u32;
+
+@compute @workgroup_size(16, 16, 1) fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+    let input_depth: f32 = textureLoad(input_texture_depth, id.xy, 0);
+    let input_color: vec4<f32> = textureLoad(input_texture_color, id.xy, 0);
+
+    let bottom_color = vec4<f32>(0.1, 0.1, 0.1, 1.0);
+    let top_color = vec4<f32>(0.03, 0.03, 0.03, 1.0);
+    let background_color: vec4<f32> = mix(
+        top_color,
+        bottom_color,
+        f32(id.y) / f32(screen_extend.y),
+    );
+    let output_color: vec4<f32> = select(input_color, background_color, input_depth == 1.0);
+
+    if (srgb_output == 1) {
+        textureStore(output_texture, id.xy, output_color);
+    } else {
+        textureStore(
+            output_texture,
+            id.xy,
+            vec4<f32>(
+                pow(output_color.r, 1.0 / 2.2),
+                pow(output_color.g, 1.0 / 2.2),
+                pow(output_color.b, 1.0 / 2.2),
+                output_color.a,
+            ),
+        );
+    }
+}
+
+)";
+
+class Postprocessor {
+    wgpu::Device device;
+    wgpu::Queue queue;
+
+    Canvas input_canvas;
+    Canvas output_canvas;
+
+    /// Input textures.
+    wgpu::BindGroup bind_group_0;
+    /// Output textures.
+    wgpu::BindGroup bind_group_1;
+    /// Other bindings.
+    wgpu::BindGroup bind_group_2;
+
+    wgpu::Buffer uniform_screen_extend;
+    wgpu::Buffer uniform_srgb_output;
+
+    wgpu::ComputePipeline pipeline;
+
+    TextureBlitter blitter;
+    wgpu::TextureFormat previous_output_format = wgpu::TextureFormat::Undefined;
+
+  public:
+    Postprocessor() = default;
+
+    Postprocessor(wgpu::Device device, wgpu::Queue queue, uint32_t width, uint32_t height)
+        : device(std::move(device))
+        , queue(std::move(queue)) {
+        this->input_canvas = Canvas(
+            this->device,
+            {
+                .width = width,
+                .height = height,
+                .color_format = wgpu::TextureFormat::RGBA16Float,
+                .create_depth_stencil_texture = true,
+                .depth_stencil_format = wgpu::TextureFormat::Depth16Unorm,
+                .texture_usages = wgpu::TextureUsage::CopySrc | wgpu::TextureUsage::CopyDst |
+                                  wgpu::TextureUsage::RenderAttachment |
+                                  wgpu::TextureUsage::TextureBinding,
+            }
+        );
+        this->output_canvas = Canvas(
+            this->device,
+            {
+                .width = width,
+                .height = height,
+                .color_format = wgpu::TextureFormat::RGBA8Unorm,
+                .create_depth_stencil_texture = false,
+                .texture_usages = wgpu::TextureUsage::CopySrc | wgpu::TextureUsage::CopyDst |
+                                  wgpu::TextureUsage::StorageBinding |
+                                  wgpu::TextureUsage::TextureBinding,
+            }
+        );
+
+        auto uniform_screen_extend_descriptor = wgpu::BufferDescriptor {
+            .label = "screen_extend",
             .usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
-            .size = sizeof(float[4][4]),
-            .mappedAtCreation = false,
+            .size = sizeof(glm::uvec2),
         };
-        this->projection = device.CreateBuffer(&buffer_descriptor);
+        this->uniform_screen_extend = this->device.CreateBuffer(&uniform_screen_extend_descriptor);
 
-        auto identity4x4 = glm::identity<glm::mat4x4>();
-        queue.WriteBuffer(this->projection, 0, &identity4x4, sizeof(identity4x4));
+        auto screen_extend = glm::uvec2(this->output_canvas.width, this->output_canvas.height);
+        this->queue
+            .WriteBuffer(this->uniform_screen_extend, 0, &screen_extend, sizeof(screen_extend));
 
-        // Bind group layout.
-        auto layout_entries = std::array {
+        auto uniform_srgb_output_descriptor = wgpu::BufferDescriptor {
+            .label = "srgb_output",
+            .usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
+            .size = sizeof(uint32_t),
+        };
+        this->uniform_srgb_output = this->device.CreateBuffer(&uniform_srgb_output_descriptor);
+
+        auto srgb_output = (uint32_t)false;
+        this->queue.WriteBuffer(this->uniform_screen_extend, 0, &srgb_output, sizeof(srgb_output));
+
+        auto input_texture_formats = std::array {
+            this->input_canvas.format.color_format,
+            this->input_canvas.format.depth_stencil_format,
+        };
+        auto bind_group_0_layout = create_texture_bind_group_layout(
+            this->device,
+            input_texture_formats,
+            true,
+            "Postprocessor input"sv
+        );
+        auto input_texture_views = std::array {
+            this->input_canvas.color_texture_view,
+            this->input_canvas.depth_stencil_texture_view,
+        };
+        assert(this.input_canvas.color_texture_view != nullptr);
+        assert(this.input_canvas.depth_stencil_texture_view != nullptr);
+        this->bind_group_0 = create_texture_bind_group(
+            this->device,
+            bind_group_0_layout,
+            input_texture_views,
+            "Postprocessor input"sv
+        );
+
+        auto output_texture_formats = std::array {
+            this->output_canvas.format.color_format,
+        };
+        auto output_texture_views = std::array {
+            this->output_canvas.color_texture_view,
+        };
+        auto bind_group_1_layout = create_texture_bind_group_layout(
+            this->device,
+            output_texture_formats,
+            false,
+            "Postprocessor output"sv
+        );
+        this->bind_group_1 = create_texture_bind_group(
+            this->device,
+            bind_group_1_layout,
+            output_texture_views,
+            "Postprocessor output"sv
+        );
+
+        auto bind_group_2_layout_entries = std::array {
             wgpu::BindGroupLayoutEntry {
                 .binding = 0,
-                .visibility = wgpu::ShaderStage::Vertex,
+                .visibility = wgpu::ShaderStage::Compute,
                 .buffer =
                     wgpu::BufferBindingLayout {
                         .type = wgpu::BufferBindingType::Uniform,
                         .hasDynamicOffset = false,
-                        .minBindingSize = sizeof(float[4][4]),
+                        .minBindingSize = sizeof(glm::uvec2),
+                    },
+            },
+            wgpu::BindGroupLayoutEntry {
+                .binding = 1,
+                .visibility = wgpu::ShaderStage::Compute,
+                .buffer =
+                    wgpu::BufferBindingLayout {
+                        .type = wgpu::BufferBindingType::Uniform,
+                        .hasDynamicOffset = false,
+                        .minBindingSize = sizeof(uint32_t),
                     },
             },
         };
+        auto bind_group_2_layout_descriptor = wgpu::BindGroupLayoutDescriptor {
+            .label = "Postprocessor uniforms"sv,
+            .entryCount = bind_group_2_layout_entries.size(),
+            .entries = bind_group_2_layout_entries.data(),
+        };
+        auto bind_group_2_layout =
+            this->device.CreateBindGroupLayout(&bind_group_2_layout_descriptor);
+        auto bind_group_2_entries = std::array {
+            wgpu::BindGroupEntry {
+                .binding = 0,
+                .buffer = this->uniform_screen_extend,
+                .offset = 0,
+                .size = this->uniform_screen_extend.GetSize(),
+            },
+            wgpu::BindGroupEntry {
+                .binding = 1,
+                .buffer = this->uniform_srgb_output,
+                .offset = 0,
+                .size = this->uniform_srgb_output.GetSize(),
+            },
+        };
+        auto bind_group_2_descriptor = wgpu::BindGroupDescriptor {
+            .label = "Postprocessor uniforms"sv,
+            .layout = bind_group_2_layout,
+            .entryCount = bind_group_2_entries.size(),
+            .entries = bind_group_2_entries.data(),
+        };
+        this->bind_group_2 = this->device.CreateBindGroup(&bind_group_2_descriptor);
+
+        auto bind_group_layouts = std::array {
+            bind_group_0_layout,
+            bind_group_1_layout,
+            bind_group_2_layout,
+        };
+        auto pipeline_layout_descriptor = wgpu::PipelineLayoutDescriptor {
+            .label = "Postprocessor"sv,
+            .bindGroupLayoutCount = bind_group_layouts.size(),
+            .bindGroupLayouts = bind_group_layouts.data(),
+        };
+        auto pipeline_layout = this->device.CreatePipelineLayout(&pipeline_layout_descriptor);
+
+        auto shader_source = wgpu::ShaderSourceWGSL({
+            .nextInChain = nullptr,
+            .code = wgpu::StringView(POSTPROCESS_SHADER_CODE),
+        });
+        auto shader_module_descriptor = wgpu::ShaderModuleDescriptor {
+            .nextInChain = &shader_source,
+            .label = "Postprocessor"sv,
+        };
+        auto shader_module = this->device.CreateShaderModule(&shader_module_descriptor);
+
+        auto bind_groups = std::array {
+            this->bind_group_0,
+            this->bind_group_1,
+        };
+        auto compute_state = wgpu::ComputeState {
+            .module = shader_module,
+            .entryPoint = "main"sv,
+            .constantCount = 0,
+            .constants = nullptr,
+        };
+        auto pipeline_descriptor = wgpu::ComputePipelineDescriptor {
+            .label = "Postprocessor"sv,
+            .layout = pipeline_layout,
+            .compute = compute_state,
+        };
+        this->pipeline = this->device.CreateComputePipeline(&pipeline_descriptor);
+    }
+
+    Canvas get_input_canvas() const {
+        return this->input_canvas;
+    }
+
+    Canvas get_output_canvas() const {
+        return this->output_canvas;
+    }
+
+    void run_postprocess_onto(Canvas result_canvas) {
+        if (this->previous_output_format != result_canvas.format.color_format) {
+            this->blitter = TextureBlitter(
+                this->device,
+                this->queue,
+                wgpu::TextureFormat::RGBA8Unorm,
+                result_canvas.format.color_format
+            );
+            this->previous_output_format = result_canvas.format.color_format;
+        }
+
+        auto encoder = this->device.CreateCommandEncoder();
+
+        auto compute_pass = encoder.BeginComputePass();
+        compute_pass.SetPipeline(this->pipeline);
+        compute_pass.SetBindGroup(0, this->bind_group_0);
+        compute_pass.SetBindGroup(1, this->bind_group_1);
+        compute_pass.SetBindGroup(2, this->bind_group_2);
+        compute_pass.DispatchWorkgroups(
+            div_ceil(this->output_canvas.width, 16u),
+            div_ceil(this->output_canvas.height, 16u)
+        );
+        compute_pass.End();
+
+        this->blitter.blit(
+            encoder,
+            this->output_canvas.color_texture_view,
+            result_canvas.color_texture_view,
+            result_canvas.width,
+            result_canvas.height
+        );
+
+        auto command_buffer = encoder.Finish();
+        this->queue.Submit(1, &command_buffer);
+    }
+
+  private:
+    static wgpu::BindGroupLayout create_texture_bind_group_layout(
+        const wgpu::Device& device,
+        std::span<wgpu::TextureFormat> texture_formats,
+        bool is_input,
+        wgpu::StringView label = {}
+    ) {
+        auto layout_entries = std::vector<wgpu::BindGroupLayoutEntry> {};
+        layout_entries.reserve(texture_formats.size());
+        uint32_t binding_index = 0;
+        for (auto& format : texture_formats) {
+            if (!is_input) {
+                layout_entries.push_back(wgpu::BindGroupLayoutEntry {
+                    .binding = binding_index,
+                    .visibility = wgpu::ShaderStage::Compute,
+                    .storageTexture =
+                        wgpu::StorageTextureBindingLayout {
+                            .access = wgpu::StorageTextureAccess::WriteOnly,
+                            .format = format,
+                            .viewDimension = wgpu::TextureViewDimension::e2D,
+                        },
+                });
+            } else {
+                wgpu::TextureSampleType sample_type;
+                switch (format) {
+                case wgpu::TextureFormat::Depth16Unorm:
+                case wgpu::TextureFormat::Depth24Plus:
+                case wgpu::TextureFormat::Depth24PlusStencil8:
+                case wgpu::TextureFormat::Depth32Float:
+                case wgpu::TextureFormat::Depth32FloatStencil8: {
+                    sample_type = wgpu::TextureSampleType::Depth;
+                } break;
+                default: {
+                    sample_type = wgpu::TextureSampleType::Float;
+                } break;
+                }
+                layout_entries.push_back(wgpu::BindGroupLayoutEntry {
+                    .binding = binding_index,
+                    .visibility = wgpu::ShaderStage::Compute,
+                    .texture =
+                        wgpu::TextureBindingLayout {
+                            .sampleType = sample_type,
+                            .viewDimension = wgpu::TextureViewDimension::e2D,
+                            .multisampled = false,
+                        },
+                });
+            }
+            ++binding_index;
+        }
         auto layout_descriptor = wgpu::BindGroupLayoutDescriptor {
-            .label = "Camera"sv,
+            .label = label,
             .entryCount = layout_entries.size(),
             .entries = layout_entries.data(),
         };
-        this->layout = device.CreateBindGroupLayout(&layout_descriptor);
+        auto bind_group_layout = device.CreateBindGroupLayout(&layout_descriptor);
+        return bind_group_layout;
+    }
 
-        auto entries = std::array {
-            wgpu::BindGroupEntry {
-                .binding = 0,
-                .buffer = this->projection,
-                .offset = 0,
-                .size = sizeof(float[4][4]),
-            },
-        };
-        auto bind_group_descriptor = wgpu::BindGroupDescriptor {
-            .label = "Camera"sv,
+    static wgpu::BindGroup create_texture_bind_group(
+        const wgpu::Device& device,
+        wgpu::BindGroupLayout layout,
+        std::span<wgpu::TextureView> texture_views,
+        wgpu::StringView label = {}
+    ) {
+        auto entries = std::vector<wgpu::BindGroupEntry> {};
+        entries.reserve(texture_views.size());
+        uint32_t binding_index = 0;
+        for (auto& texture_view : texture_views) {
+            entries.push_back(wgpu::BindGroupEntry {
+                .binding = binding_index,
+                .textureView = texture_view,
+            });
+            ++binding_index;
+        }
+        auto descriptor = wgpu::BindGroupDescriptor {
+            .label = label,
             .layout = layout,
             .entryCount = entries.size(),
             .entries = entries.data(),
         };
-        this->wgpu_bind_group = device.CreateBindGroup(&bind_group_descriptor);
-    }
-
-    void set_projection(const wgpu::Queue& queue, glm::mat4x4 value) {
-        queue.WriteBuffer(this->projection, 0, &value, sizeof(value));
+        auto bind_group = device.CreateBindGroup(&descriptor);
+        return bind_group;
     }
 };
 
@@ -111,9 +436,14 @@ struct Application {
 
     GLFWwindow* window;
 
+    bool needs_resize = false;
+
+    Postprocessor postprocessor;
+
     void run() {
         this->initialize_wgpu();
-        this->initialize_window_and_surface();
+        this->initialize_window_and_swapchain();
+        this->initialize_postprocessor();
         this->initialize_scene();
 
 #if defined(__EMSCRIPTEN__)
@@ -158,6 +488,9 @@ struct Application {
             }
         );
         this->instance.WaitAny(adapter_future, UINT64_MAX);
+        wgpu::AdapterInfo adapter_info;
+        this->adapter.GetInfo(&adapter_info);
+        log_info("GPU: {}", fmt::streamed(adapter_info.description));
 
         // Device.
         wgpu::DeviceDescriptor device_descriptor {};
@@ -202,7 +535,7 @@ struct Application {
         this->queue = this->device.GetQueue();
     }
 
-    void initialize_window_and_surface() {
+    void initialize_window_and_swapchain() {
         if (!glfwInit()) {
             log_error("GLFW initialization error");
             abort();
@@ -213,8 +546,8 @@ struct Application {
         auto init_width = (uint32_t)web_init_width();
         auto init_height = (uint32_t)web_init_height();
 #else
-        auto init_width = 720;
-        auto init_height = 480;
+        auto init_width = 960;
+        auto init_height = 540;
 #endif
         this->window =
             glfwCreateWindow(init_width, init_height, "TBN Engine Demo", nullptr, nullptr);
@@ -227,6 +560,8 @@ struct Application {
             Swapchain::CreateInfo {
                 .create_depth_stencil_texture = true,
                 .depth_stencil_format = wgpu::TextureFormat::Depth16Unorm,
+                .prefer_srgb = false,
+                .prefer_float = false,
             }
         );
 
@@ -236,11 +571,13 @@ struct Application {
     }
 
     void initialize_scene() {
+        this->scene =
+            Scene(this->device, this->queue, this->postprocessor.get_input_canvas().format);
+
         this->camera = std::make_shared<PerspectiveCamera>();
         this->camera->position = glm::vec3(0, 0, 100);
         this->camera->direction = glm::normalize(glm::vec3(0, 0., -1));
 
-        this->scene = Scene(this->device, this->queue, this->swapchain.get_format());
         this->scene.set_camera(this->camera);
 
         auto light_position = glm::vec3(400, 400, -400);
@@ -255,7 +592,29 @@ struct Application {
         this->cube1 = this->scene.create_entity(geometry1, material1);
     }
 
+    void initialize_postprocessor() {
+        this->postprocessor = Postprocessor(
+            this->device,
+            this->queue,
+            this->swapchain.get_width(),
+            this->swapchain.get_height()
+        );
+    }
+
     void draw_frame() {
+        if (needs_resize) {
+            uint32_t width;
+            uint32_t height;
+            glfwGetFramebufferSize(this->window, (int32_t*)&width, (int32_t*)&height);
+            this->swapchain.reconfigure_for_size(width, height);
+            this->postprocessor = Postprocessor(
+                this->device,
+                this->queue,
+                this->swapchain.get_width(),
+                this->swapchain.get_height()
+            );
+        }
+
         double tau = glm::tau<double>();
         double t = unix_seconds();
         {
@@ -292,16 +651,17 @@ struct Application {
             this->scene.get_entity(this->cube1).set_model(model);
         }
 
-        auto surface = this->swapchain.get_current_surface();
-        this->scene.draw(surface);
+        auto input_canvas = this->postprocessor.get_input_canvas();
+        this->scene.draw(input_canvas);
+
+        this->postprocessor.run_postprocess_onto(this->swapchain.get_current_canvas());
     }
 
     static void window_resize_callback(GLFWwindow*, int32_t, int32_t) {}
 
-    static void framebuffer_resize_callback(GLFWwindow* window, int32_t width, int32_t height) {
+    static void framebuffer_resize_callback(GLFWwindow* window, int32_t, int32_t) {
         auto this_ = (Application*)glfwGetWindowUserPointer(window);
-        log_verbose("resizing surface to {}x{}", width, height);
-        this_->swapchain.reconfigure_for_size((uint32_t)width, (uint32_t)height);
+        this_->needs_resize = true;
     }
 };
 

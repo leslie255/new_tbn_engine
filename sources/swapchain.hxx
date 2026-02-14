@@ -52,7 +52,7 @@ class Swapchain {
 
     CanvasFormat get_format() const;
 
-    Canvas get_current_surface();
+    Canvas get_current_canvas();
 
     void reconfigure_for_size(uint32_t width, uint32_t height);
 
