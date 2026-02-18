@@ -1,7 +1,6 @@
 #pragma once
 
 #include <glm/ext.hpp>
-#include <memory>
 
 #include "geometry/base.hxx"
 #include "material/base.hxx"

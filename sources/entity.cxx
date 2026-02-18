@@ -36,11 +36,14 @@ Entity::Entity(
 
     // Pipeline.
     auto vertex_shader = geometry->create_vertex_shader(device);
+    auto vertex_buffer_layouts = geometry->vertex_buffer_layouts();
     auto vertex_state = wgpu::VertexState {
         .module = vertex_shader.shader_module,
         .entryPoint = wgpu::StringView(vertex_shader.entry_point),
         .constantCount = vertex_shader.constants.size(),
         .constants = vertex_shader.constants.data(),
+        .bufferCount = vertex_buffer_layouts.size(),
+        .buffers = vertex_buffer_layouts.data(),
     };
     auto color_target_state = wgpu::ColorTargetState {
         .format = surface_color_format,
@@ -50,7 +53,7 @@ Entity::Entity(
     auto depth_stencil_state = wgpu::DepthStencilState {
         .format = surface_depth_stencil_format,
         .depthWriteEnabled = true,
-        .depthCompare = wgpu::CompareFunction::LessEqual,
+        .depthCompare = wgpu::CompareFunction::Less,
     };
     auto fragment_shader = material->create_fragment_shader(device);
     auto fragment_state = wgpu::FragmentState {

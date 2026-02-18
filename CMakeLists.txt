@@ -15,13 +15,17 @@ add_compile_options("-fno-exceptions")
 add_compile_options("-fmacro-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}/=")
 add_compile_options("-g")
 
+# remove -DNDEBUG from release flags
+string(REPLACE "-DNDEBUG" "" CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE}")
+string(REPLACE "-DNDEBUG" "" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
+
 set(CMAKE_CXX_FLAGS "-O2")
 set(CMAKE_CXX_FLAGS_DEBUG "-O0")
 
 add_executable(app
   "sources/main.cxx"
   "sources/log.cxx"
-  "sources/object_base.cxx"
+  "sources/object.cxx"
   "sources/entity.cxx"
   "sources/scene.cxx"
   "sources/canvas.cxx"
@@ -63,9 +67,13 @@ elseif(CMAKE_SYSTEM_PROCESSOR EQUAL "x86_64")
 endif()
 add_subdirectory("libraries/glm" EXCLUDE_FROM_ALL)
 
+# fastgltf
+set(FASTGLTF_COMPILE_AS_CPP20 ON)
+add_subdirectory(libraries/fastgltf)
+
 # === Linking === #
 
-target_link_libraries(app PRIVATE fmt glm)
+target_link_libraries(app PRIVATE fmt glm fastgltf)
 if(EMSCRIPTEN)
     set_target_properties(app PROPERTIES SUFFIX ".html")
     target_link_libraries(app PRIVATE emdawnwebgpu_cpp webgpu_glfw)

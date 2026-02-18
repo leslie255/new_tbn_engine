@@ -89,26 +89,22 @@ EntityId Scene::create_entity(
         std::move(material)
     );
     this->entities.push_back(std::move(entity));
-    return EntityId(this->entities.size() - 1);
+    return EntityId(this->entities.size());
 }
 
 Entity& Scene::get_entity(EntityId id) {
-    assert(id.index + 1 < this.entities.size());
-    auto& entity = this->entities[id.index];
+    assert(id.index <= this->entities.size());
+    auto& entity = this->entities[id.index - 1];
     assert(entity != nullptr);
     return entity;
 }
 
 void Scene::delete_entity(EntityId id) {
-    assert(id.index + 1 < this.entities.size());
-    this->entities[id.index] = nullptr;
+    assert(id.index <= this->entities.size());
+    this->entities[id.index - 1] = nullptr;
 }
 
 void Scene::draw(const Canvas& surface) {
-    assert(surface.color_texture != nullptr);
-    assert(surface.depth_stencil_texture != nullptr);
-    assert(surface.color_format == this->surface_color_format);
-    assert(surface.depth_stencil_format == this->surface_depth_stencil_format);
     if (surface.width == 0 || surface.height == 0) {
         log_warn(
             "Scene::draw called on surface with zero pixels (surface size: {}x{})",

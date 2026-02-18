@@ -10,6 +10,7 @@
 #include "camera/perspective.hxx"
 #include "entity.hxx"
 #include "geometry/box.hxx"
+#include "geometry/model.hxx"
 #include "log.hxx"
 #include "material/color.hxx"
 #include "material/uv_debug.hxx"
@@ -55,8 +56,8 @@ const std::string_view POSTPROCESS_SHADER_CODE = R"(
     let input_depth: f32 = textureLoad(input_texture_depth, id.xy, 0);
     let input_color: vec4<f32> = textureLoad(input_texture_color, id.xy, 0);
 
-    let bottom_color = vec4<f32>(0.1, 0.1, 0.1, 1.0);
-    let top_color = vec4<f32>(0.03, 0.03, 0.03, 1.0);
+    let bottom_color = vec4<f32>(0.08021982031446832, 0.11697066775851084, 0.21586050011389926, 1.0);
+    let top_color = vec4<f32>(0.05126945837404324, 0.11697066775851084, 0.35153259950043936, 1.0);
     let background_color: vec4<f32> = mix(
         top_color,
         bottom_color,
@@ -123,7 +124,7 @@ class Postprocessor {
                 .height = height,
                 .color_format = wgpu::TextureFormat::RGBA16Float,
                 .create_depth_stencil_texture = true,
-                .depth_stencil_format = wgpu::TextureFormat::Depth16Unorm,
+                .depth_stencil_format = wgpu::TextureFormat::Depth32Float,
                 .texture_usages = wgpu::TextureUsage::CopySrc | wgpu::TextureUsage::CopyDst |
                                   wgpu::TextureUsage::RenderAttachment |
                                   wgpu::TextureUsage::TextureBinding,
@@ -178,8 +179,8 @@ class Postprocessor {
             this->input_canvas.color_texture_view,
             this->input_canvas.depth_stencil_texture_view,
         };
-        assert(this.input_canvas.color_texture_view != nullptr);
-        assert(this.input_canvas.depth_stencil_texture_view != nullptr);
+        assert(this->input_canvas.color_texture_view != nullptr);
+        assert(this->input_canvas.depth_stencil_texture_view != nullptr);
         this->bind_group_0 = create_texture_bind_group(
             this->device,
             bind_group_0_layout,
@@ -301,17 +302,17 @@ class Postprocessor {
         return this->input_canvas;
     }
 
-    Canvas get_output_canvas() const {
-        return this->output_canvas;
-    }
-
     void run_postprocess_onto(Canvas result_canvas) {
         if (this->previous_output_format != result_canvas.format.color_format) {
             this->blitter = TextureBlitter(
                 this->device,
                 this->queue,
-                wgpu::TextureFormat::RGBA8Unorm,
-                result_canvas.format.color_format
+                {
+                    .src_format = wgpu::TextureFormat::RGBA8Unorm,
+                    .dst_format = result_canvas.format.color_format,
+                    .width = this->output_canvas.width,
+                    .height = this->output_canvas.height,
+                }
             );
             this->previous_output_format = result_canvas.format.color_format;
         }
@@ -332,9 +333,7 @@ class Postprocessor {
         this->blitter.blit(
             encoder,
             this->output_canvas.color_texture_view,
-            result_canvas.color_texture_view,
-            result_canvas.width,
-            result_canvas.height
+            result_canvas.color_texture_view
         );
 
         auto command_buffer = encoder.Finish();
@@ -438,8 +437,9 @@ struct Application {
 
     Scene scene;
 
-    EntityId cube0;
-    EntityId cube1;
+    EntityId entity0;
+    EntityId entity1;
+    EntityId entity2;
 
     GLFWwindow* window;
 
@@ -587,15 +587,25 @@ struct Application {
         this->scene.set_camera(this->camera);
 
         auto light_position = glm::vec3(400, 400, -400);
-        auto geometry0 = std::make_shared<BoxGeometry>(this->device, this->queue);
+        auto model0 = Model<uint32_t>::from_glb_file("assets/models/ico_sphere.glb");
+        assert(model0.check_indices_all_in_bounds());
+        auto geometry0 = std::make_shared<ModelGeometry>(this->device, this->queue, model0);
         auto material0 =
             std::make_shared<ColorMaterial>(this->device, this->queue, srgb(0.3, 0.6, 0.7));
         material0->update_light_position(this->queue, light_position);
-        this->cube0 = this->scene.create_entity(geometry0, material0);
+        this->entity0 = this->scene.create_entity(geometry0, material0);
 
         auto geometry1 = std::make_shared<BoxGeometry>(this->device, this->queue);
         auto material1 = std::make_shared<UvDebugMaterial>();
-        this->cube1 = this->scene.create_entity(geometry1, material1);
+        this->entity1 = this->scene.create_entity(geometry1, material1);
+
+        auto model2 = Model<uint32_t>::from_glb_file("assets/models/cat.glb");
+        assert(model2.check_indices_all_in_bounds());
+        auto geometry2 = std::make_shared<ModelGeometry>(this->device, this->queue, model2);
+        auto material2 =
+            std::make_shared<ColorMaterial>(this->device, this->queue, srgb(0.8, 0.8, 0.8));
+        material2->update_light_position(this->queue, light_position);
+        this->entity2 = this->scene.create_entity(geometry2, material2);
     }
 
     void initialize_postprocessor() {
@@ -629,17 +639,16 @@ struct Application {
             double period = 6.0;
             float rotation = (float)fmod(t * tau / period, tau);
 
-            auto size = glm::vec3(60, 60, 60);
-            auto position = glm::vec3(-50, 0, 0);
+            auto size = glm::vec3(40, 40, 40);
+            auto position = glm::vec3(-70, 0, 0);
             auto model = glm::identity<glm::mat4x4>();
 
             model = glm::translate(model, position);
             model = glm::rotate(model, rotation - glm::pi<float>(), glm::vec3(1, 0, 0));
             model = glm::rotate(model, rotation, glm::vec3(0, 1, 0));
-            model = glm::translate(model, -0.5f * size);
             model = glm::scale(model, size);
 
-            this->scene.get_entity(this->cube0).set_model(model);
+            this->scene.get_entity(this->entity0).set_model(model);
         }
 
         {
@@ -647,7 +656,7 @@ struct Application {
             float rotation = (float)fmod(t * tau / period, tau);
 
             auto size = glm::vec3(30, 30, 30);
-            auto position = glm::vec3(50, 0, 20);
+            auto position = glm::vec3(70, 0, 20);
             auto model = glm::identity<glm::mat4x4>();
 
             model = glm::translate(model, position);
@@ -656,7 +665,22 @@ struct Application {
             model = glm::translate(model, -0.5f * size);
             model = glm::scale(model, size);
 
-            this->scene.get_entity(this->cube1).set_model(model);
+            this->scene.get_entity(this->entity1).set_model(model);
+        }
+
+        {
+            double period = 5.0;
+            float rotation = (float)fmod(t * tau / period, tau);
+
+            auto size = glm::vec3(8, 8, 8);
+            auto position = glm::vec3(0, -24, 0);
+            auto model = glm::identity<glm::mat4x4>();
+
+            model = glm::translate(model, position);
+            model = glm::rotate(model, rotation, glm::vec3(0, 1, 0));
+            model = glm::scale(model, size);
+
+            this->scene.get_entity(this->entity2).set_model(model);
         }
 
         auto input_canvas = this->postprocessor.get_input_canvas();

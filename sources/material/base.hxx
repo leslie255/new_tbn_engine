@@ -3,7 +3,7 @@
 #include <glm/vec3.hpp>
 #include <webgpu/webgpu_cpp.h>
 
-#include "../object_base.hxx"
+#include "../object.hxx"
 #include "../shader_info.hxx"
 
 /// alignas(16) to be compatible with WGSL struct of the same topology.

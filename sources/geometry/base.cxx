@@ -14,6 +14,10 @@ ShaderInfo GeometryBase::create_vertex_shader(const wgpu::Device&) const {
     std::abort();
 }
 
+std::vector<wgpu::VertexBufferLayout> GeometryBase::vertex_buffer_layouts() const {
+    return std::vector<wgpu::VertexBufferLayout> {};
+}
+
 wgpu::BindGroupLayout GeometryBase::create_bind_group_layout(const wgpu::Device& device) const {
     auto descriptor = wgpu::BindGroupLayoutDescriptor {
         .entryCount = 0,

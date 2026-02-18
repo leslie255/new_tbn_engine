@@ -155,7 +155,7 @@ struct VertexOut {
 
     var output: VertexOut;
     output.position_clip = projection * model_view * vec4(positions[i], 1.0);
-    output.position_world = positions[i].xyz;
+    output.position_world = (model * vec4(positions[i], 1.0)).xyz;
     output.uv = uvs[i];
     output.normal = (normal_transform * vec4(normals[i], 1.0)).xyz;
 

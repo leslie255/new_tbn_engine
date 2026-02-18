@@ -51,12 +51,10 @@ struct VertexOutput {
 TextureBlitter::TextureBlitter(
     wgpu::Device device,
     wgpu::Queue queue,
-    wgpu::TextureFormat src_format,
-    wgpu::TextureFormat dst_format
+    const TextureBlitter::CreateInfo& info
 )
     : device(std::move(device))
     , queue(std::move(queue)) {
-    (void)src_format;
     auto bind_group_layout_entries = std::array {
         wgpu::BindGroupLayoutEntry {
             .binding = 0,
@@ -106,7 +104,7 @@ TextureBlitter::TextureBlitter(
         .bufferCount = 0,
     };
     auto colorTarget = wgpu::ColorTargetState {
-        .format = dst_format,
+        .format = info.dst_format,
         .writeMask = wgpu::ColorWriteMask::All,
     };
     auto fragmentState = wgpu::FragmentState {
@@ -136,14 +134,19 @@ TextureBlitter::TextureBlitter(
         .size = sizeof(glm::uvec2),
     };
     this->extend_uniform = this->device.CreateBuffer(&buffer_descriptor);
+
+    this->resize(info.width, info.height);
+}
+
+void TextureBlitter::resize(uint32_t width, uint32_t height) {
+    auto extend = glm::uvec2(width, height);
+    this->queue.WriteBuffer(this->extend_uniform, 0, (const uint8_t*)&extend, sizeof(extend));
 }
 
 void TextureBlitter::blit(
     wgpu::CommandEncoder& encoder,
     wgpu::TextureView src_texture,
-    wgpu::TextureView dst_texture,
-    uint32_t width,
-    uint32_t height
+    wgpu::TextureView dst_texture
 ) const {
     auto bgEntries = std::array {
         wgpu::BindGroupEntry {
@@ -165,9 +168,6 @@ void TextureBlitter::blit(
     };
 
     auto bind_group = device.CreateBindGroup(&bind_group_descriptor);
-
-    auto extend = glm::uvec2(width, height);
-    this->queue.WriteBuffer(this->extend_uniform, 0, (const uint8_t*)&extend, sizeof(extend));
 
     auto color_attachment = wgpu::RenderPassColorAttachment {
         .view = dst_texture,

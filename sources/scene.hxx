@@ -3,11 +3,15 @@
 #include <webgpu/webgpu_cpp.h>
 
 #include "camera/base.hxx"
-#include "entity.hxx"
 #include "canvas.hxx"
+#include "entity.hxx"
 
 struct EntityId {
     size_t index;
+
+    constexpr bool operator==(nullptr_t) const {
+        return this->index == 0;
+    }
 };
 
 class Scene {

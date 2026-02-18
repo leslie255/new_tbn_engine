@@ -1,3 +1,3 @@
-#include "object_base.hxx"
+#include "object.hxx"
 
 ObjectBase::~ObjectBase() {}
